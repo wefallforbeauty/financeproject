@@ -1,117 +1,147 @@
-# Güncelleme günlüğü
+# Update log
+
+## Unreleased
+
+### Name, language and platforms
+
+- The project is now called **financeproject** (it was Hane-Finans). The
+  GitHub repository, the Python package (`financeproject`) and the command
+  (`finance`) carry the new name.
+- Everything in the repository is in English: code, messages, commands,
+  account names, documentation and tests.
+  - Account roots: `Assets`, `Liabilities`, `Equity`, `Income`, `Expenses`.
+  - Account kinds: `checking`, `time_deposit`, `fx`, `gold`, `credit_card`,
+    `consumer_loan`, … (`finance account kinds`).
+  - Commands: `finance init`, `account add`, `expense`, `balance-sheet`,
+    `networth`, … (`finance --help`).
+- The setup no longer assumes Linux. Personal data lives in the user data
+  directory of each operating system (found with `platformdirs`); the
+  instructions show Windows, macOS and Linux.
+- Numbers are written `1,234.56` by default; `finance config number-format
+  "1.234,56"` switches to the Turkish style. Dates are shown as ISO
+  (2026-10-09).
+- The CSV import detects the delimiter and the decimal separator from the
+  file. A file whose amounts are all ambiguous (`1.234`) needs `--decimal`.
+- Ledgers made by 00 have Turkish account names and are refused with a clear
+  message (schema version 2).
+- Fixed: account paths such as `Assets:Bank:Checking` were printed with an
+  emoji, because the terminal library read `:bank:` as an emoji code.
+
+The calculations did not change: on the same made-up household, version 00 and
+this version give identical net worth tables.
 
 ## 00 (2026-10-09)
 
-İlk sürüm. Programın temeli: çift taraflı defter, kur, altın ve TÜFE verileri,
-dört birimle net servet. Plan ve gerekçeler: README'deki yol haritası ve tasarım
-ilkeleri.
+The first version. The foundation of the program: a double-entry ledger,
+exchange rate, gold and CPI data, net worth in four units. The plan and the
+reasons: the roadmap and the design principles in the README.
 
-### Yapı
+### Structure
 
-- Python paketi `hane_finans`. Katmanlar:
-  - `core`: saf hesaplar; veritabanı ve ağ kullanmaz
+- Python package `hane_finans` (renamed to `financeproject` after 00). Layers:
+  - `core`: pure calculations; no database, no network
   - `ledger`: SQLite + SQLAlchemy
-  - `prices`: veri kaynakları
-  - `ingest`: içe aktarma
-  - `reports`: raporlar
-  - `cli`: komut satırı
-- Komut satırı `finans` (Typer + Rich). Komutlar Türkçe; hesap ve kişi adları
-  Türkçe harfsiz de yazılabilir.
-- 106 pytest testi:
-  - kaydedilmiş gerçek TCMB ve Frankfurter yanıtları
-  - Hypothesis ile rastgele defterler
-  - TÜİK'in 2005–2026 TÜFE serisiyle doğrulama
-  - komut satırının uçtan uca denenmesi
+  - `prices`: data sources
+  - `ingest`: importing
+  - `reports`: reports
+  - `cli`: command line
+- Command line `finans` (Typer + Rich). The commands were in Turkish; account
+  and person names can be typed without Turkish letters.
+- 106 pytest tests:
+  - saved real TCMB and Frankfurter answers
+  - random ledgers with Hypothesis
+  - a check against TurkStat's 2005–2026 CPI series
+  - the command line tried end to end
 
-### Defter
+### Ledger
 
-- Çift taraflı kayıt; tutarlar işaretli (varlık ve gider +, borç, gelir ve
-  özkaynak −). Bir işlemin satırları her birimde toplamda sıfır olmalı. Bir
-  satırın tutarı boş bırakılırsa dengeyi o satır alır.
-- Tutarlar `Decimal`, veritabanında metin olarak saklanıyor; float yok. Her
-  birimin ondalık sınırı var: TL 2, gram altın 4.
-- Döviz, altın ve fon alım-satımı Selinger'in takas hesaplarıyla tutuluyor
-  (`Özkaynak:Takas:<BİRİM>`). İşlem her birimde ayrı ayrı dengede kalıyor ve
-  kur ya da fiyat etkisi sonradan ayrıştırılabiliyor.
-- Hesap türleri, likidite katmanları ve borç vadesi tanımlı:
-  - varlıklar: nakit, vadesiz, vadeli, döviz, altın, fon, hisse, BES…
-  - borçlar: kredi kartı, KMH, ihtiyaç, konut, taşıt…
-  - hesap sahibi (kişi) ya da ortak hesap
-  - kurum
-  - açılış ve kapanış tarihleri
-- Yardımcı işlemler:
-  - açılış bakiyesi (doğal işaretle)
-  - harcama, gelir, transfer
-  - döviz/altın değişimi (kuru nota yazar)
-  - genel işlem
+- Double entry with signed amounts (assets and expenses +, liabilities, income
+  and equity −). The postings of a transaction add up to zero in every unit.
+  A posting left without an amount takes the balance.
+- Amounts are `Decimal`, stored as text in the database; no floats. Each unit
+  has a limit on decimal places: TRY 2, grams of gold 4.
+- Buying and selling currency, gold and funds goes through Selinger's trading
+  accounts. A transaction balances in each unit on its own, and currency or
+  price effects can be separated later.
+- Account kinds, liquidity tiers and debt terms:
+  - assets: cash, checking, time deposit, foreign currency, gold, fund, stock,
+    private pension (BES)…
+  - debts: credit card, overdraft (KMH), consumer loan, mortgage, vehicle
+    loan…
+  - the account's owner (a person) or a shared account
+  - institution
+  - opening and closing dates
+- Helpers:
+  - opening balance (natural sign)
+  - expense, income, transfer
+  - currency/gold exchange (the rate goes into the note)
+  - general transaction
 
-### Fiyatlar ve TÜFE
+### Prices and CPI
 
-- **Döviz:** TCMB günlük XML bülteni, anahtarsız. Değerleme döviz alış
-  kurundan yapılıyor; fiyat tarihi bülten tarihi. EVDS anahtarı varsa bir
-  aralık tek istekte iniyor (`TP.DK.USD.A.YTL`, `TP.DK.EUR.A.YTL`).
-- **Altın:** Frankfurter v2 XAU/USD. Yaklaşık on dört merkez bankasının
-  ortalaması, 1999'dan beri, anahtarsız. Gram başına USD olarak saklanıyor;
-  TL fiyatı USD/TRY ile bulunuyor.
-- **TÜFE:**
-  - EVDS3 `TP.TUKFIY2025.GENEL` (2025=100, anahtarlı).
-  - Anahtar yoksa TCMB'nin enflasyon sayfasındaki aylık değişimler
-    zincirleniyor ve 2025 ortalaması 100 olacak şekilde ölçekleniyor.
-  - TCMB tablosunun bir kopyası pakete eklendi (2005-01 – 2026-09).
-  - Zincirlenen endeks, yayımlanan 249 yıllık değişimin hepsini en fazla
-    0,037 puan farkla (ortalama 0,008) tutturuyor.
-- **EVDS3'e geçiş:** EVDS 2025'te evds3'e taşındı. Anahtar artık `key` HTTP
-  başlığında gidiyor; eski `TP.FG.J0` ve `TP.MK.KUL.YTL` serileri arşivlendi.
-  İstemci buna göre yazıldı.
-- **Fiyat önceliği:** elle girilen fiyatı otomatik güncelleme ezmiyor. TÜFE'de
-  öncelik sırası EVDS > TCMB tablosu > paketteki kopya.
+- **Currencies:** the TCMB daily XML bulletin, no key. Valuation uses the forex
+  buying rate; the price date is the bulletin date. With an EVDS key a range
+  comes in one request (`TP.DK.USD.A.YTL`, `TP.DK.EUR.A.YTL`).
+- **Gold:** Frankfurter v2 XAU/USD. The average of about fourteen central
+  banks, since 1999, no key. Stored per gram in USD; the TRY price follows from
+  USD/TRY.
+- **CPI:**
+  - EVDS3 `TP.TUKFIY2025.GENEL` (2025=100, with a key).
+  - Without a key, the monthly changes on the TCMB inflation page are chained
+    and scaled so that the 2025 average is 100.
+  - A copy of the TCMB table ships with the package (2005-01 – 2026-09).
+  - The chained index matches all 249 published annual changes within 0.037
+    points (0.008 on average).
+- **The move to EVDS3:** EVDS moved to evds3 in 2025. The key now goes in the
+  `key` HTTP header; the old `TP.FG.J0` and `TP.MK.KUL.YTL` series were
+  archived. The client was written for this.
+- **Price priority:** an automatic update never overwrites a price entered by
+  hand. For the CPI the order is EVDS > TCMB table > bundled copy.
 
-### Değerleme ve raporlar
+### Valuation and reports
 
-- **Net servet dört birimle:**
-  - TL: öne çıkan birim
-  - reel TL: son TÜFE ayının fiyatlarıyla. Günlük fiyat düzeyi, ay
-    ortalarına yerleştirilen TÜFE değerleri arasında log-doğrusal
-    interpolasyonla bulunuyor.
+- **Net worth in four units:**
+  - TRY: the headline unit
+  - real TRY: in the prices of the latest CPI month. The daily price level is
+    interpolated log-linearly between CPI values placed in the middle of each
+    month.
   - USD
-  - gram altın
-- **Fiyatlar tahmin edilmiyor:**
-  - Fiyatı olmayan varlık net servete katılmıyor ve uyarı veriyor.
-  - 7 günden eski fiyat "bayat" olarak işaretleniyor.
-  - Her değerin yanında fiyat tarihi ve kaynağı gösteriliyor.
-- **Likidite:** katmanlara göre varlıklar, kısa ve uzun vadeli borç, likit net
-  varlık.
-- **Kişiye göre kırılım:** `finans bilanco --kisi Babam` ya da `--kisi ortak`.
-- **Raporlar:**
-  - `finans servet`: net servetin aylık, haftalık ya da günlük seyri, CSV
-    çıktısıyla.
-  - `finans grafik`: PNG. Dört birim ayrı panellerde; tek eksen, çift eksen
-    yok.
+  - grams of gold
+- **Prices are never guessed:**
+  - An asset without a price is left out of net worth with a warning.
+  - A price older than 7 days is marked "stale".
+  - Each value is shown with its price date and source.
+- **Liquidity:** assets by tier, short- and long-term debt, liquid net assets.
+- **Breakdown by person:** the balance sheet of one person or of the shared
+  accounts.
+- **Reports:**
+  - net worth over time, monthly, weekly or daily, with CSV output.
+  - a PNG chart. The four units have separate panels; one axis each, no dual
+    axes.
 
-### İçe aktarma ve kurallar
+### Import and rules
 
-- **CSV:** standart biçim ya da sütun eşlemesi.
-  - Tutar tek sütunda olabilir ya da giriş ve çıkış ayrı sütunlarda.
-  - Başlıktan önceki satırlar atlanabilir.
-  - Tarih biçimi seçilebilir, işaret ters çevrilebilir.
-  - Kodlama otomatik bulunuyor (UTF-8, Windows-1254, ISO-8859-9).
-- **Mükerrer kontrolü:** her satırın bir içe aktarma anahtarı var (hesap,
-  tarih, tutar, açıklama ve aynı satırların sıra numarasının özeti). Aynı ya
-  da üst üste binen ekstreler iki kez eklenmiyor.
-- **Ya hep ya hiç:** hatalı satır varsa hiçbir şey yazılmıyor. `--deneme` ile
-  önizleme yapılabiliyor.
-- **Kategori kuralları:** metin ya da regex, öncelik sırasıyla. Kategorisiz
-  işlemlere sonradan da uygulanabiliyor.
+- **CSV:** the standard layout or a column mapping.
+  - The amount can be one column, or money in and out in separate columns.
+  - Lines before the header can be skipped.
+  - The date format can be given, and the sign can be inverted.
+  - The encoding is detected (UTF-8, Windows-1254, ISO-8859-9).
+- **Duplicate check:** each row has an import key (a hash of the account,
+  date, amount, description and the occurrence number of identical rows). The
+  same or overlapping statements are not added twice.
+- **All or nothing:** if any row is invalid, nothing is written. A dry run
+  previews the import.
+- **Categorization rules:** text or regex, by priority. They can also be
+  applied to uncategorized transactions later.
 
-### Gizlilik ve araçlar
+### Privacy and tools
 
-- **Konum:** kişisel veri depo dışında (`~/.local/share/hane-finans/`); dosyalar
-  0600 izinli. `.gitignore` ikinci güvenlik ağı.
-- **EVDS anahtarı:** ortam değişkeninden ya da 0600 izinli ayar dosyasından
-  okunuyor.
-- **Yedek:** `finans yedekle`, SQLite'ın yedekleme API'siyle tutarlı bir kopya
-  alıyor.
-- **Örnek hane:** `finans ornek` uydurma bir haneyi ayrı bir deftere yazıyor;
-  gerçek deftere yazmayı reddediyor.
-- **Durum:** `finans durum` defterin özetini ve her birimde toplamın sıfır
-  olduğunu gösteriyor.
+- **Location:** personal data lives outside the repository; files are created
+  readable only by the user. `.gitignore` is a second safety net.
+- **EVDS key:** read from an environment variable or from a settings file
+  readable only by the user.
+- **Backup:** a consistent copy through SQLite's backup API.
+- **Demo household:** a made-up household goes into a separate ledger; writing
+  it into the real ledger is refused.
+- **Status:** a summary of the ledger, including the check that every unit
+  sums to zero.
