@@ -196,3 +196,13 @@ def test_categorize_and_recategorize(demo_db):
     assert "Expenses:Gifts" in ok(db, "txn", "recategorize", number, "Gifts")
 
 
+def test_installment_expense(db):
+    ok(db, "init")
+    ok(db, "account", "add", "Liabilities:Credit Card:Bonus", "--kind", "credit_card")
+    ok(db, "account", "add", "Expenses:Electronics")
+    out = ok(db, "expense", "9000", "Electronics", "--from", "Bonus", "--installments", "3", "--date", "2026-10-05")
+    assert "in 3 installments from 2026-11" in out
+    result = run(db, "expense", "10", "Electronics", "--from", "Bonus", "--first-due", "2026-11")
+    assert result.exit_code == 1 and "--installments" in result.output
+    out = ok(db, "installments", "--date", "2026-10-31")
+    assert "3,000.00" in out and "0/3" in out

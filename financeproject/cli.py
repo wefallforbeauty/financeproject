@@ -517,11 +517,37 @@ def expense(
     description: Annotated[Optional[str], typer.Option(help="Default: the name of the expense account")] = None,
     on: DateOption = None,
     payee: Annotated[Optional[str], typer.Option(help="Shop or person")] = None,
+    installments: Annotated[
+        Optional[int], typer.Option(help="Pay in this many monthly installments (credit cards only)")
+    ] = None,
+    first_due: Annotated[
+        Optional[str], typer.Option(help="Month of the first installment, e.g. 2026-11 (default: the next month)")
+    ] = None,
 ) -> None:
-    """Spending: the expense grows, the paying account shrinks (on a credit card the debt grows)."""
+    """Spending: the expense grows, the paying account shrinks (on a credit card the debt grows).
+
+    With --installments the whole purchase is still a debt from today; the
+    installment plan records in which months its parts fall due.
+    """
+    from financeproject.core.dates import parse_month
+    from financeproject.ledger.installments import record_installment_purchase
+
     with ledger(ctx) as s:
         e = acc_mod.find_account(s, expense_account)
-        tx = record_expense(s, amount(value), e, from_, day(on), description or e.path.split(":")[-1], payee)
+        text = description or e.path.split(":")[-1]
+        if installments is not None:
+            tx = record_installment_purchase(
+                s, amount(value), e, from_, day(on), text, installments, parse_month(first_due) if first_due else None, payee
+            )
+            plan = tx.installment_plan
+            console.print(
+                f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)}: {money(amount(value))} in "
+                f"{plan.count} installments from {plan.first_due:%Y-%m}"
+            )
+            return
+        if first_due:
+            raise FinanceError("--first-due needs --installments.")
+        tx = record_expense(s, amount(value), e, from_, day(on), text, payee)
         console.print(f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)}: {money(amount(value))}")
 
 
@@ -1267,7 +1293,7 @@ def demo(
     )
 
 
-# --------------------------------------------------------------------------- 01: categories
+# --------------------------------------------------------------------------- 01: categories and installments
 
 
 def _pct(value: float | None, decimals: int = 1) -> str:
@@ -1342,6 +1368,59 @@ def categorize(
                 f"[green]{changed} categorized[/] ({len(matches)} by rules, {len(suggestions)} by the model); "
                 f"{left} still uncategorized."
             )
+
+
+@app.command("installments")
+@guarded
+def installments_cmd(
+    ctx: typer.Context,
+    months: Annotated[int, typer.Option(help="How many months of the schedule to show")] = 12,
+    on: DateOption = None,
+) -> None:
+    """Installment purchases, what falls due in the coming months, and each card's balance split."""
+    from collections import defaultdict
+
+    from financeproject.ledger.installments import not_billed, plans, schedule
+
+    at = day(on)
+    current = month_start(at)
+    with ledger(ctx) as s:
+        items = [p for p in plans(s) if p.transaction.date <= at]
+        if not items:
+            console.print(
+                "No installment purchases yet. Record one with: "
+                "finance expense AMOUNT CATEGORY --from CARD --installments N"
+            )
+            return
+        t = table("Bought", "Description", "Card", "Total>", "Billed>", "Billed amount>", "Still to come>", "Last month")
+        dues: dict[date, Decimal] = defaultdict(Decimal)
+        for plan in items:
+            parts = schedule(plan)
+            billed = [i for i in parts if i.month <= current]
+            done = sum((i.amount for i in billed), Decimal(0))
+            for i in parts:
+                if current <= i.month < add_months(current, months):
+                    dues[i.month] += i.amount
+            t.add_row(
+                str(plan.transaction.date), escape(plan.transaction.description[:40]), escape(plan.account.path),
+                money(plan.total), f"{len(billed)}/{plan.count}", money(done), money(plan.total - done),
+                f"{parts[-1].month:%Y-%m}",
+            )
+        console.print(t)
+        if dues:
+            d = table("Month", "Installments due>")
+            for m in sorted(dues):
+                d.add_row(f"{m:%Y-%m}" + (" (this month)" if m == current else ""), money(dues[m]))
+            console.print(d)
+        later = not_billed(s, current, at)
+        if later:
+            c = table("Card", "Balance owed>", "Installments of later months>", "Rest>")
+            for path, value in sorted(later.items()):
+                acc = acc_mod.find_account(s, path)
+                owed = -account_balance(s, acc, at).get(acc.commodity_code or "TRY", Decimal(0))
+                c.add_row(escape(path), money(owed), money(value), money(owed - value))
+            console.print(c)
+            console.print("[dim]Rest = what the card owes apart from installments not billed yet.[/]")
 
 
 def main() -> None:
