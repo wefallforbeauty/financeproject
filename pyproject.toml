@@ -15,6 +15,7 @@ dependencies = [
     "typer>=0.12",
     "rich>=13",
     "platformdirs>=3",
+    "python-calamine>=0.2",
 ]
 
 [project.optional-dependencies]

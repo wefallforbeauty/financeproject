@@ -36,6 +36,7 @@ from financeproject.core.inflation import Deflator, annual_pct, monthly_pct
 from financeproject.core.kinds import (
     ASSET,
     EQUITY,
+    EXPENSE,
     INCOME,
     KINDS,
     LIABILITY,
@@ -661,26 +662,135 @@ def txn_delete(ctx: typer.Context, number: Annotated[int, typer.Argument(metavar
 # --------------------------------------------------------------------------- import and rules
 
 
+@txn_app.command("recategorize")
+@guarded
+def txn_recategorize(
+    ctx: typer.Context,
+    number: Annotated[int, typer.Argument(metavar="ID")],
+    account: Annotated[str, typer.Argument(help="The new income or expense account")],
+) -> None:
+    """Move a simple transaction to another category. The learned model learns from it."""
+    from financeproject.ledger.transactions import recategorize
+
+    with ledger(ctx) as s:
+        tx = recategorize(s, number, account)
+        category = next(p.account.path for p in tx.postings if p.account.type in (INCOME, EXPENSE))
+        console.print(f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)} → {escape(category)}")
+
+
+# --------------------------------------------------------------------------- import and rules
+
+
+def _print_import(result, dry_run: bool) -> None:
+    t = table("Line>", "Date", "Description", "Amount>", "Account", "Counter account", "How", "")
+    for r in result.rows[:200]:
+        t.add_row(
+            str(r.line),
+            str(r.date),
+            escape((r.payee or r.description)[:40]),
+            f"{money(r.amount)} {r.commodity}",
+            escape(r.account),
+            escape(r.counter_account),
+            r.how,
+            "[dim]already in[/]" if r.duplicate else "",
+        )
+    console.print(t)
+    if len(result.rows) > 200:
+        console.print(f"… {len(result.rows) - 200} more rows")
+    console.print(f"Read: {escape(result.source)}")
+    if result.errors:
+        for e in result.errors:
+            err.print(f"[red]{escape(e)}[/]")
+        raise FinanceError(f"{len(result.errors)} problems; nothing was written.")
+    if result.opening:
+        when, value = result.opening
+        verb = "would be added" if dry_run else "added"
+        console.print(f"Opening balance {verb}: {money(value)} on {when} (the balance before the statement's first line)")
+    learned = f", {result.learned} by the learned model" if result.learned else ""
+    if dry_run:
+        console.print(
+            f"[yellow]Dry run:[/] {result.new} new{learned}, {result.duplicates} already in, "
+            f"{result.uncategorized} uncategorized; nothing was written."
+        )
+    else:
+        hint = " (add rules or recategorize some, then run 'finance categorize')" if result.uncategorized else ""
+        console.print(
+            f"[green]{result.added} transactions added[/]{learned}, {result.duplicates} were already in, "
+            f"{result.uncategorized} uncategorized{hint}."
+        )
+    check = result.balance_check
+    if check is not None:
+        ledger_text = "would be" if check.predicted else "is"
+        if check.ok:
+            console.print(f"[green]Balance check:[/] the bank's balance on {check.on} is {money(check.bank)}; the ledger's {ledger_text} the same.")
+        else:
+            err.print(
+                f"[yellow]Balance check:[/] the bank's balance on {check.on} is {money(check.bank)}, the ledger's "
+                f"{ledger_text} {money(check.ledger)} (difference {money(check.difference)}). Missing transactions, or an "
+                "opening balance to enter (--opening for a new account)?"
+            )
+
+
 @app.command("import")
 @guarded
 def import_(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="CSV file")],
-    account: Annotated[Optional[str], typer.Option(help="Account of every row when the file has no 'account' column")] = None,
-    delimiter: Annotated[str, typer.Option(help="Column delimiter: ';', ',', 'tab' or 'auto'")] = "auto",
-    decimal: Annotated[str, typer.Option(help="Decimal separator: ',', '.' or 'auto'")] = "auto",
-    date_format: Annotated[Optional[str], typer.Option(help="For example %d.%m.%Y (default: 2026-10-09 or 09.10.2026)")] = None,
-    encoding: Annotated[Optional[str], typer.Option(help="utf-8, cp1254… (default: detected)")] = None,
-    columns: Annotated[
-        Optional[str], typer.Option(help="Mapping, e.g. 'date=Transaction Date,description=Details,amount=Amount'")
+    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A CSV file, or a bank statement (.xlsx, .html)")],
+    account: Annotated[
+        Optional[str], typer.Option(help="The statement's account; for CSV, the account of rows without one")
     ] = None,
-    skip: Annotated[int, typer.Option(help="Lines to skip before the header row")] = 0,
-    invert_sign: Annotated[bool, typer.Option(help="For statements that list spending as positive amounts")] = False,
+    bank: Annotated[str, typer.Option(help="Bank template: 'auto' or one of the templates (see README)")] = "auto",
+    opening: Annotated[
+        bool, typer.Option(help="Statements: start a new account at the balance before the first line")
+    ] = False,
+    delimiter: Annotated[str, typer.Option(help="CSV column delimiter: ';', ',', 'tab' or 'auto'")] = "auto",
+    decimal: Annotated[str, typer.Option(help="CSV decimal separator: ',', '.' or 'auto'")] = "auto",
+    date_format: Annotated[Optional[str], typer.Option(help="CSV, for example %d.%m.%Y (default: 2026-10-09 or 09.10.2026)")] = None,
+    encoding: Annotated[Optional[str], typer.Option(help="CSV: utf-8, cp1254… (default: detected)")] = None,
+    columns: Annotated[
+        Optional[str], typer.Option(help="CSV mapping, e.g. 'date=Transaction Date,description=Details,amount=Amount'")
+    ] = None,
+    skip: Annotated[int, typer.Option(help="CSV: lines to skip before the header row")] = 0,
+    invert_sign: Annotated[bool, typer.Option(help="CSV: spending is listed as positive amounts")] = False,
+    learn: Annotated[bool, typer.Option(help="Let the learned model categorize what the rules do not")] = True,
+    min_confidence: Annotated[float, typer.Option(help="Least probability for a learned category")] = 0.8,
     dry_run: Annotated[bool, typer.Option(help="Preview without writing anything")] = False,
 ) -> None:
-    """Import a CSV file; rows already imported are skipped. Format: README → Importing."""
-    from financeproject.ingest.csvfile import CsvFormat, import_csv, parse_column_map
+    """Import a bank statement or a CSV file; rows already imported are skipped.
 
+    Bank statements (.xlsx, .html) are recognized by their template, checked
+    line by line against the bank's running balance and totals, and compared
+    with the ledger afterwards. CSV format: README → Importing.
+    """
+    from financeproject.ingest.banks import (
+        EXCEL_SUFFIXES,
+        HTML_SUFFIXES,
+        read_statement,
+    )
+    from financeproject.ingest.csvfile import CsvFormat, import_csv, parse_column_map
+    from financeproject.ingest.importer import import_statement
+
+    if not 0 < min_confidence <= 1:
+        raise FinanceError("--min-confidence must be between 0 and 1.")
+    if bank != "auto" or file.suffix.lower() in EXCEL_SUFFIXES + HTML_SUFFIXES:
+        statement = read_statement(file, None if bank == "auto" else bank)
+        if not account:
+            raise FinanceError("A bank statement needs --account: the ledger account it belongs to.")
+        period = f"{statement.start} – {statement.end}"
+        balances = (
+            f"; balance {money(statement.opening_balance)} → {money(statement.closing_balance)}"
+            if statement.has_balances
+            else ""
+        )
+        console.print(f"[bold]{escape(statement.bank)}[/] statement, {period}, {len(statement.lines)} lines{balances}")
+        with ledger(ctx) as s:
+            result = import_statement(
+                s, statement, file, account, dry_run=dry_run, add_opening=opening, use_model=learn, min_confidence=min_confidence
+            )
+            _print_import(result, dry_run)
+        return
+    if opening:
+        raise FinanceError("--opening works with bank statements, which carry balances; CSV files do not.")
     _check_choice(decimal, ("auto", ",", "."), "--decimal")
     fmt = CsvFormat(
         delimiter={"auto": None, "tab": "\t"}.get(delimiter, delimiter),
@@ -692,35 +802,8 @@ def import_(
         invert_sign=invert_sign,
     )
     with ledger(ctx) as s:
-        result = import_csv(s, file, fmt, account=account, dry_run=dry_run)
-        t = table("Line>", "Date", "Description", "Amount>", "Account", "Counter account", "How", "")
-        for r in result.rows[:200]:
-            t.add_row(
-                str(r.line),
-                str(r.date),
-                escape(r.description[:40]),
-                f"{money(r.amount)} {r.commodity}",
-                escape(r.account),
-                escape(r.counter_account),
-                r.how,
-                "[dim]already in[/]" if r.duplicate else "",
-            )
-        console.print(t)
-        if len(result.rows) > 200:
-            console.print(f"… {len(result.rows) - 200} more rows")
-        console.print(f"Encoding: {result.encoding}")
-        if result.errors:
-            for e in result.errors:
-                err.print(f"[red]{escape(e)}[/]")
-            raise FinanceError(f"{len(result.errors)} rows have errors; nothing was written.")
-        new = len(result.rows) - result.duplicates
-        if dry_run:
-            console.print(f"[yellow]Dry run:[/] {new} new, {result.duplicates} already in; nothing was written.")
-        else:
-            console.print(
-                f"[green]{result.added} transactions added[/], {result.duplicates} rows were already in, "
-                f"{result.uncategorized} uncategorized (add rules, then run 'finance rule apply')."
-            )
+        result = import_csv(s, file, fmt, account=account, dry_run=dry_run, use_model=learn, min_confidence=min_confidence)
+        _print_import(result, dry_run)
 
 
 @rule_app.command("add")
@@ -1182,6 +1265,83 @@ def demo(
         f"prices: {source}\nTo look at it:\n  finance -d \"{path}\" balance-sheet\n  finance -d \"{path}\" networth\n"
         f"  finance -d \"{path}\" chart"
     )
+
+
+# --------------------------------------------------------------------------- 01: categories
+
+
+def _pct(value: float | None, decimals: int = 1) -> str:
+    return "—" if value is None else f"{value * 100:.{decimals}f} %"
+
+
+@app.command()
+@guarded
+def categorize(
+    ctx: typer.Context,
+    min_confidence: Annotated[float, typer.Option(help="Least probability for a learned category")] = 0.8,
+    dry_run: Annotated[bool, typer.Option(help="Show what would change without changing it")] = False,
+    evaluate: Annotated[
+        bool, typer.Option(help="Measure how well the model would have guessed the ledger so far")
+    ] = False,
+) -> None:
+    """Categorize uncategorized transactions: the rules first, then the model learned from the ledger."""
+    from financeproject.ingest import learn
+    from financeproject.ingest.rules import rule_matches
+    from financeproject.ledger.db import UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME
+
+    if not 0 < min_confidence <= 1:
+        raise FinanceError("--min-confidence must be between 0 and 1.")
+    with ledger(ctx) as s:
+        if evaluate:
+            items = learn.examples(s)
+            ev = learn.evaluate(items, min_confidence)
+            t = table("Measure", "Value>")
+            t.add_row("Categorized simple transactions", str(len(items)))
+            t.add_row(f"Guessed in date order (after the first {learn.MIN_EXAMPLES})", str(ev.examples))
+            t.add_row("Right, among all guesses", _pct(ev.accuracy))
+            t.add_row(f"Guesses with probability ≥ {min_confidence:g}", _pct(ev.coverage))
+            t.add_row("Right, among those (what would be applied)", _pct(ev.precision))
+            console.print(t)
+            console.print("[dim]Each transaction was guessed from the earlier ones only, then learned (prequential evaluation).[/]")
+            return
+        matches = rule_matches(s)
+        matched = {tx.id for tx, _, _ in matches}
+        model = learn.train(s)
+        suggestions = [x for x in (learn.suggest(s, model, min_confidence) if model else []) if x.transaction.id not in matched]
+        if matches or suggestions:
+            t = table("#>", "Date", "Description", "Amount>", "New category", "How")
+            for tx, posting, rule in matches:
+                t.add_row(
+                    str(tx.id), str(tx.date), escape((tx.payee or tx.description)[:40]), money(posting.amount),
+                    escape(rule.account.path), f"rule #{rule.rule_id}",
+                )
+            for x in suggestions:
+                tx = x.transaction
+                t.add_row(
+                    str(tx.id), str(tx.date), escape((tx.payee or tx.description)[:40]), money(x.posting.amount),
+                    escape(x.account.path), f"model {x.confidence:.2f}",
+                )
+            console.print(t)
+        if not dry_run:
+            for _, posting, rule in matches:
+                posting.account = rule.account
+            learn.apply(s, suggestions)
+        left = s.scalar(
+            select(func.count())
+            .select_from(Posting)
+            .join(Account, Posting.account_id == Account.id)
+            .where(Account.path.in_((UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME)))
+        )
+        if model is None:
+            console.print(f"[dim]The model needs at least {learn.MIN_EXAMPLES} categorized transactions to learn from.[/]")
+        changed = len(matches) + len(suggestions)
+        if dry_run:
+            console.print(f"[yellow]Dry run:[/] {changed} would be categorized ({len(matches)} by rules, {len(suggestions)} by the model).")
+        else:
+            console.print(
+                f"[green]{changed} categorized[/] ({len(matches)} by rules, {len(suggestions)} by the model); "
+                f"{left} still uncategorized."
+            )
 
 
 def main() -> None:

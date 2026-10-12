@@ -17,10 +17,10 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from html.parser import HTMLParser
 
 import httpx
 
+from financeproject.core.htmltable import table_rows
 from financeproject.errors import SourceError
 
 URL = (
@@ -37,34 +37,6 @@ class CpiChange:
     monthly_pct: Decimal
 
 
-class _TableCells(HTMLParser):
-    """Collects the text of every table cell, row by row."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.rows: list[list[str]] = []
-        self._row: list[str] | None = None
-        self._cell: list[str] | None = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "tr":
-            self._row = []
-        elif tag in ("td", "th") and self._row is not None:
-            self._cell = []
-
-    def handle_endtag(self, tag):
-        if tag in ("td", "th") and self._row is not None and self._cell is not None:
-            self._row.append(" ".join("".join(self._cell).split()))
-            self._cell = None
-        elif tag == "tr" and self._row is not None:
-            self.rows.append(self._row)
-            self._row = None
-
-    def handle_data(self, data):
-        if self._cell is not None:
-            self._cell.append(data)
-
-
 def _number(text: str) -> Decimal:
     try:
         return Decimal(text.replace(",", "."))
@@ -74,10 +46,8 @@ def _number(text: str) -> Decimal:
 
 def parse_cpi_table(html: str) -> list[CpiChange]:
     """Rows ``MM-YYYY | annual % | monthly %``, oldest first."""
-    parser = _TableCells()
-    parser.feed(html)
     out: dict[date, CpiChange] = {}
-    for row in parser.rows:
+    for row in table_rows(html):
         if len(row) < 3 or not (m := _MONTH.fullmatch(row[0])):
             continue
         month = date(int(m[2]), int(m[1]), 1)

@@ -103,7 +103,7 @@ def test_import_preview_and_rules(db, tmp_path):
     out = ok(db, "import", str(path), "--account", "Bonus")
     assert "2 transactions added" in out and "2 uncategorized" in out
     out = ok(db, "import", str(path), "--account", "Bonus")
-    assert "0 transactions added" in out and "2 rows were already in" in out
+    assert "0 transactions added" in out and "2 were already in" in out
     ok(db, "rule", "add", "migros", "Groceries")
     assert "migros" in ok(db, "rule", "list")
     assert "1 transactions categorized" in ok(db, "rule", "apply")
@@ -157,3 +157,42 @@ def test_broken_settings_file_is_a_clear_error(db):
     path.write_text("[evds\napi_key = ", encoding="utf-8")
     result = run(db, "config", "show")
     assert result.exit_code == 1 and "Cannot read the settings file" in result.output
+
+
+def test_statement_import(db, fixtures, tmp_path):
+    ok(db, "init")
+    ok(db, "account", "add", "Assets:Bank:Ziraat Checking", "--kind", "checking")
+    xlsx, html = str(fixtures / "ziraat_statement.xlsx"), str(fixtures / "ziraat_statement.html")
+    result = run(db, "import", xlsx)
+    assert result.exit_code == 1 and "--account" in result.output
+    out = ok(db, "import", xlsx, "--account", "Ziraat", "--opening", "--dry-run")
+    assert "Ziraat Bankası statement" in out and "Dry run" in out and "would be the same" in out
+    out = ok(db, "import", xlsx, "--account", "Ziraat", "--opening")
+    assert "10 transactions added" in out and "the ledger's is the same" in out and "12,500.00" in out
+    out = ok(db, "import", html, "--account", "Ziraat")
+    assert "0 transactions added" in out and "10 were already in" in out
+    csv_path = tmp_path / "s.csv"
+    csv_path.write_text("date,description,amount\n2026-10-01,X,-1\n", encoding="utf-8")
+    result = run(db, "import", str(csv_path), "--account", "Ziraat", "--opening")
+    assert result.exit_code == 1 and "--opening" in result.output
+
+
+@pytest.fixture
+def demo_db(db):
+    out = runner.invoke(app, ["-d", db, "demo", "--synthetic", "--start", "2025-10-01", "--end", "2026-09-30"])
+    assert out.exit_code == 0, out.output
+    return db
+
+
+def test_categorize_and_recategorize(demo_db):
+    db = demo_db
+    assert "prequential" in ok(db, "categorize", "--evaluate")
+    assert "Dry run" in ok(db, "categorize", "--dry-run")
+    assert "categorized" in ok(db, "categorize")
+    ok(db, "account", "add", "Expenses:Gifts")
+    ok(db, "expense", "300", "Expenses:Uncategorized", "--from", "Sample Card", "--date", "2026-09-29", "--payee", "FLORIST")
+    out = ok(db, "txn", "list", "--last", "1")
+    number = out.split("│")[1].strip()
+    assert "Expenses:Gifts" in ok(db, "txn", "recategorize", number, "Gifts")
+
+

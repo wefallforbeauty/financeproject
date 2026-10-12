@@ -287,3 +287,28 @@ def delete_transaction(session: Session, transaction_id: int) -> Transaction:
     session.delete(tx)
     session.flush()
     return tx
+
+
+def recategorize(session: Session, transaction_id: int, account: str | Account) -> Transaction:
+    """Move the income or expense leg of a simple transaction to another category.
+
+    A simple transaction has one balance-sheet leg and one income or expense
+    leg; that is what imports and the expense and income commands create.
+    """
+    tx = session.get(Transaction, transaction_id)
+    if tx is None:
+        raise LedgerError(f"No transaction #{transaction_id}")
+    target = find_account(session, account)
+    if target.type not in (INCOME, EXPENSE):
+        raise LedgerError(f"The new category must be an income or expense account: {target.path}")
+    categories = [p for p in tx.postings if p.account.type in (INCOME, EXPENSE)]
+    if len(tx.postings) != 2 or len(categories) != 1:
+        raise LedgerError(
+            f"Transaction #{tx.id} is not a simple income or expense; change it with 'txn delete' and 'txn add'."
+        )
+    leg = categories[0]
+    if target.commodity_code and target.commodity_code != leg.commodity_code:
+        raise LedgerError(f"{target.path} holds only {target.commodity_code}; this transaction is in {leg.commodity_code}.")
+    leg.account = target
+    session.flush()
+    return tx
