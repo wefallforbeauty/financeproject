@@ -184,6 +184,27 @@ def demo_db(db):
     return db
 
 
+def test_reports(demo_db, tmp_path):
+    db = demo_db
+    out = ok(db, "income-statement", "--start", "2026-07", "--end", "2026-09")
+    assert "Total income" in out and "Net saving" in out and "Savings rate" in out
+    ok(db, "income-statement", "--start", "2026-07", "--end", "2026-09", "--real", "--csv", str(tmp_path / "i.csv"))
+    assert (tmp_path / "i.csv").exists()
+    out = ok(db, "cash-flow", "--start", "2026-07", "--end", "2026-09")
+    assert "Cash at the start" in out and "Card payments" in out and "Cash at the end" in out
+    ok(db, "sankey", "--month", "2026-09", "--file", str(tmp_path / "s.png"))
+    assert (tmp_path / "s.png").exists()
+    out = ok(db, "ratios", "--date", "2026-09-30")
+    assert "Emergency fund" in out and "Greninger" in out
+    for unit in ("try", "real", "usd", "gold"):
+        out = ok(db, "change", "--month", "2026-09", "--unit", unit)
+        assert "Net saving" in out and "Revaluation" in out
+    assert "NETFLIX.COM" in ok(db, "recurring", "--date", "2026-09-30")
+    assert "Card installments" in ok(db, "upcoming", "--date", "2026-09-30")
+    out = ok(db, "installments", "--date", "2026-09-30")
+    assert "ARCELIK" in out and "Still to come" in out
+
+
 def test_categorize_and_recategorize(demo_db):
     db = demo_db
     assert "prequential" in ok(db, "categorize", "--evaluate")

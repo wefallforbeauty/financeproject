@@ -1293,11 +1293,29 @@ def demo(
     )
 
 
-# --------------------------------------------------------------------------- 01: categories and installments
+# --------------------------------------------------------------------------- 01: categories, installments, flows, ratios
 
 
 def _pct(value: float | None, decimals: int = 1) -> str:
     return "—" if value is None else f"{value * 100:.{decimals}f} %"
+
+
+def _month_range(start: str | None, end: str | None, months: int, today: date) -> tuple[date, date]:
+    from financeproject.core.dates import parse_month
+
+    if months < 1:
+        raise FinanceError("--months must be at least 1.")
+    last = parse_month(end) if end else month_start(today)
+    first = parse_month(start) if start else add_months(last, -(months - 1))
+    if first > last:
+        raise FinanceError("--start is after --end.")
+    return first, last
+
+
+def _short_month(m: date) -> str:
+    from financeproject.core.dates import MONTHS_SHORT
+
+    return f"{MONTHS_SHORT[m.month - 1]} {m:%y}"
 
 
 @app.command()
@@ -1421,6 +1439,363 @@ def installments_cmd(
                 c.add_row(escape(path), money(owed), money(value), money(owed - value))
             console.print(c)
             console.print("[dim]Rest = what the card owes apart from installments not billed yet.[/]")
+
+
+@app.command("income-statement")
+@guarded
+def income_statement_cmd(
+    ctx: typer.Context,
+    start: Annotated[Optional[str], typer.Option(help="First month, e.g. 2026-04")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last month (default: this month)")] = None,
+    months: Annotated[int, typer.Option(help="Number of months when --start is not given")] = 6,
+    depth: Annotated[int, typer.Option(help="Account levels to show, e.g. 2 = Expenses:Food")] = 2,
+    real: Annotated[bool, typer.Option(help="In real TRY (prices of the latest CPI month)")] = False,
+    csv_file: Annotated[Optional[Path], typer.Option("--csv", help="Also write the table as CSV")] = None,
+) -> None:
+    """Income and expenses by category and month, net saving and savings rate."""
+    import pandas as pd
+
+    from financeproject.core.dates import month_end
+    from financeproject.reports.context import load_market_data
+    from financeproject.reports.income import IncomeStatement, income_statement
+
+    today = date.today()
+    first, last = _month_range(start, end, months, today)
+    with ledger(ctx) as s:
+        market = load_market_data(s)
+        st = income_statement(s, first, last, depth, "real" if real else "try", market, end=today)
+    partial = st.months and st.end < month_end(st.months[-1])
+    heads = [_short_month(m) + ("*" if partial and m == st.months[-1] else "") for m in st.months]
+    t = table("", *(h + ">" for h in heads), "Total>", "Per month>")
+    n = len(st.months)
+    records = []
+
+    def add(label: str, by_month: dict[date, Decimal], bold: bool = False, section: str = "") -> None:
+        total = sum(by_month.values(), Decimal(0))
+        cells = [money(by_month.get(m), 0) if by_month.get(m) else "" for m in st.months]
+        row = [escape(label), *cells, money(total, 0), money(total / n, 0)]
+        t.add_row(*([f"[bold]{c}[/]" for c in row] if bold else row))
+        records.append({"section": section, "row": label, **{f"{m:%Y-%m}": float(by_month.get(m, 0)) for m in st.months}, "total": float(total)})
+
+    def totals(table_: dict[str, dict[date, Decimal]]) -> dict[date, Decimal]:
+        out: dict[date, Decimal] = {}
+        for by_month in table_.values():
+            for m, v in by_month.items():
+                out[m] = out.get(m, Decimal(0)) + v
+        return out
+
+    t.add_row("[bold]Income[/]", *[""] * (n + 2))
+    for key in IncomeStatement.totals(st.income):
+        add(f"  {key}", st.income[key], section="income")
+    add("Total income", totals(st.income), True, "income")
+    t.add_section()
+    t.add_row("[bold]Expenses[/]", *[""] * (n + 2))
+    for key in IncomeStatement.totals(st.expenses):
+        add(f"  {key}", st.expenses[key], section="expenses")
+    add("Total expenses", totals(st.expenses), True, "expenses")
+    t.add_section()
+    net = {m: st.net(m) for m in st.months}
+    add("Net saving", net, True, "net")
+    rates = [_pct(st.savings_rate(m), 0) for m in st.months]
+    t.add_row("Savings rate", *rates, _pct(st.savings_rate(), 0), "")
+    unit = f"real TRY, in {month_label(market.base_month)} prices" if real else "TRY"
+    console.print(f"[bold]Income statement[/] · {st.start} – {st.end} · {unit}")
+    console.print(t)
+    if partial:
+        console.print(f"[dim]* {month_label(st.months[-1])} so far (to {st.end}).[/]")
+    for item in st.unvalued[:10]:
+        err.print(f"[yellow]No price, left out:[/] {escape(item)}")
+    if csv_file:
+        pd.DataFrame(records).to_csv(csv_file, index=False)
+        console.print(f"CSV: {csv_file}")
+
+
+@app.command("cash-flow")
+@guarded
+def cash_flow_cmd(
+    ctx: typer.Context,
+    start: Annotated[Optional[str], typer.Option(help="First month, e.g. 2026-04")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last month (default: this month)")] = None,
+    months: Annotated[int, typer.Option(help="Number of months when --start is not given")] = 6,
+    real: Annotated[bool, typer.Option(help="In real TRY (prices of the latest CPI month)")] = False,
+) -> None:
+    """Where the money in the cash accounts (tier 0) came from and went, month by month."""
+    from financeproject.reports.cashflow import LINES, cash_flow
+    from financeproject.reports.context import load_market_data
+
+    today = date.today()
+    first, last = _month_range(start, end, months, today)
+    with ledger(ctx) as s:
+        market = load_market_data(s)
+        flows = cash_flow(s, first, last, "real" if real else "try", market, end=today)
+    if not flows:
+        console.print("No months to show.")
+        return
+    t = table("", *(_short_month(f.month) + ">" for f in flows), "Total>")
+
+    def add(label: str, values: list[Decimal], bold: bool = False, total: Decimal | None = None) -> None:
+        cells = [escape(label), *(money(v, 0) for v in values), "" if total is None else money(total, 0)]
+        t.add_row(*([f"[bold]{c}[/]" for c in cells] if bold else cells))
+
+    add("Cash at the start", [f.beginning for f in flows], True)
+    t.add_section()
+    for key, label, _ in LINES:
+        values = [f.line(key) for f in flows]
+        if key in ("income", "expenses", "operating", "investing", "cards", "loans") or any(abs(v) >= Decimal("0.5") for v in values):
+            add(("" if key == "operating" else "  ") + label, values, key == "operating", sum(values, Decimal(0)))
+    values = [f.revaluation for f in flows]
+    add("  Revaluation of foreign currency", values, total=sum(values, Decimal(0)))
+    t.add_section()
+    add("Cash at the end", [f.ending for f in flows], True)
+    unit = f"real TRY, in {month_label(market.base_month)} prices" if real else "TRY"
+    console.print(f"[bold]Cash flow[/] · cash, checking and foreign currency accounts · {unit}")
+    console.print(t)
+    console.print(
+        "[dim]Card purchases leave cash when the card is paid (Card payments), not when they are made. "
+        "Foreign currency held as cash is revalued at each day's exchange rate.[/]"
+    )
+    for f in flows:
+        if f.decomposition.unvalued:
+            err.print(f"[yellow]{f.month:%Y-%m}: left out (no price):[/] {', '.join(f.decomposition.unvalued)}")
+
+
+@app.command()
+@guarded
+def sankey(
+    ctx: typer.Context,
+    month: Annotated[Optional[str], typer.Option(help="One month, e.g. 2026-09 (default: last month)")] = None,
+    start: Annotated[Optional[str], typer.Option(help="First month of a longer period")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last month of a longer period")] = None,
+    depth: Annotated[int, typer.Option(help="Account levels, e.g. 2 = Expenses:Food")] = 2,
+    file: Annotated[Optional[Path], typer.Option(help="PNG path (default: in the output folder)")] = None,
+) -> None:
+    """Sankey diagram (PNG): income sources → budget → expense categories and savings."""
+    from financeproject.core.dates import parse_month
+    from financeproject.reports.context import load_market_data
+    from financeproject.reports.income import IncomeStatement, income_statement
+    from financeproject.reports.sankey import build, save_sankey
+
+    today = date.today()
+    if month:
+        first = last = parse_month(month)
+    elif start or end:
+        first, last = _month_range(start, end, 1, today)
+    else:
+        first = last = add_months(month_start(today), -1)
+    with ledger(ctx) as s:
+        st = income_statement(s, first, last, depth, "try", load_market_data(s), end=today)
+    data = build(IncomeStatement.totals(st.income), IncomeStatement.totals(st.expenses))
+    period = month_label(first) if first == last else f"{_short_month(first)} – {_short_month(last)}"
+    target = file or config.output_dir() / (
+        f"sankey-{first:%Y-%m}.png" if first == last else f"sankey-{first:%Y-%m}-{last:%Y-%m}.png"
+    )
+    save_sankey(
+        data, target, f"Where the money went · {period}",
+        footnote=f"{st.start} – {st.end}. TRY on the day of each transaction"
+        + ("; the smallest categories are grouped as Other." if data.grouped else "."),
+    )
+    console.print(f"[green]Sankey:[/] {target}")
+
+
+@app.command()
+@guarded
+def ratios(
+    ctx: typer.Context,
+    on: DateOption = None,
+    months: Annotated[int, typer.Option(help="Months of income and expenses to average over")] = 12,
+) -> None:
+    """Household financial ratios against the benchmarks of Greninger et al. (1996)."""
+    from financeproject.reports.context import load_market_data
+    from financeproject.reports.ratios import BELOW, DANGER, OK, household_ratios
+
+    if months < 1:
+        raise FinanceError("--months must be at least 1.")
+    at = day(on)
+    with ledger(ctx) as s:
+        report = household_ratios(s, at, months, load_market_data(s))
+    labels = {OK: "[green]✓ ok[/]", BELOW: "[yellow]• below[/]", DANGER: "[red]▲ danger[/]", None: ""}
+    t = table("Ratio", "Value>", "Benchmark", "Status", "What it is")
+    for r in report.ratios:
+        if r.value is None:
+            value = "—"
+        elif r.unit == "months":
+            value = f"{r.value:.1f} months"
+        elif r.unit == "%":
+            value = f"{r.value:.1f} %"
+        else:
+            value = f"{r.value:.2f} ×"
+        t.add_row(r.name, value, r.benchmark, labels[r.status], escape(r.note))
+    console.print(f"[bold]Household ratios[/] · flows {report.start + timedelta(days=1)} – {report.end} ({months} months) · balances on {report.end}")
+    console.print(t)
+    inputs = table("Input", "TRY>")
+    for label, value in (
+        ("Income", report.income),
+        ("Expenses", report.expenses),
+        ("Loan principal repaid", report.principal_repaid),
+        ("Monthly expenses (incl. principal)", report.monthly_expenses),
+        ("Loan payments (non-mortgage)", report.loan_payments),
+        ("Mortgage payments", report.mortgage_payments),
+        ("Card installments due", report.installments_due),
+        ("Liquid assets", report.liquid),
+        ("Investment assets", report.investments),
+        ("Net worth", report.net_worth),
+    ):
+        inputs.add_row(label, money(value))
+    console.print(inputs)
+    console.print(
+        "[dim]Benchmarks: Greninger et al. (1996), a Delphi study among US financial planners and educators. "
+        "They are signals for a closer look, not advice.[/]"
+    )
+
+
+@app.command()
+@guarded
+def change(
+    ctx: typer.Context,
+    month: Annotated[Optional[str], typer.Option(help="One month, e.g. 2026-09 (default: this month so far)")] = None,
+    start: Annotated[Optional[str], typer.Option(help="From the end of this day…")] = None,
+    end: Annotated[Optional[str], typer.Option(help="…to the end of this day (default: today)")] = None,
+    unit: Annotated[str, typer.Option(help="try, real, usd or gold")] = "try",
+    top: Annotated[int, typer.Option(help="Accounts to show under income and expenses")] = 5,
+) -> None:
+    """Why net worth changed: income, expenses, exchange results and revaluation."""
+    from financeproject.core.dates import month_end, parse_month
+    from financeproject.reports.change import UNITS, networth_change
+    from financeproject.reports.context import load_market_data
+
+    _check_choice(unit, tuple(UNITS), "--unit")
+    today = date.today()
+    if month:
+        m = parse_month(month)
+        a, b = month_start(m) - timedelta(days=1), min(month_end(m), today)
+    else:
+        a = parse_date(start) if start else month_start(today) - timedelta(days=1)
+        b = parse_date(end) if end else today
+    with ledger(ctx) as s:
+        market = load_market_data(s)
+        d = networth_change(s, a, b, unit, market)
+    decimals = 2 if unit in ("usd", "gold") else 0
+    suffix = {"try": "TRY", "real": "TRY", "usd": "USD", "gold": "g"}[unit]
+
+    def fmt(v: Decimal, sign: bool = True) -> str:
+        return f"{format_amount(v, decimals, sign=sign)} {suffix}"
+
+    t = Table(show_header=False, box=None, pad_edge=False)
+    t.add_column("")
+    t.add_column("", justify="right")
+    t.add_row(f"[bold]Net worth on {a}[/]", f"[bold]{fmt(d.start_value, False)}[/]")
+    for key, label in (("income", "Income"), ("expenses", "Expenses")):
+        t.add_row(label, fmt(d.flows.get(key, Decimal(0))))
+        detail = sorted(d.details.get(key, {}).items(), key=lambda kv: -abs(kv[1]))
+        for path, v in detail[:top]:
+            t.add_row(f"  [dim]{escape(path)}[/]", f"[dim]{fmt(v)}[/]")
+        if len(detail) > top:
+            rest = sum((v for _, v in detail[top:]), Decimal(0))
+            t.add_row(f"  [dim]{len(detail) - top} more[/]", f"[dim]{fmt(rest)}[/]")
+    saving = d.flows.get("income", Decimal(0)) + d.flows.get("expenses", Decimal(0))
+    t.add_row("[bold]Net saving[/]", f"[bold]{fmt(saving)}[/]")
+    shown = Decimal(1).scaleb(-decimals) / 2
+    for key, label in (
+        ("exchange", "Exchange results (buying and selling currency or gold)"),
+        ("opening", "Opening balances (accounts added to the ledger)"),
+        ("equity", "Other equity"),
+        ("unvalued", "Moved to or from assets without a price"),
+    ):
+        if abs(d.flows.get(key, Decimal(0))) >= shown:
+            t.add_row(label, fmt(d.flows[key]))
+    if d.revaluation:
+        t.add_row("Revaluation", fmt(d.revaluation_total))
+        for commodity, v in sorted(d.revaluation.items(), key=lambda kv: -abs(kv[1])):
+            name = commodity
+            if commodity == "TRY" and unit == "real":
+                name = "TRY (inflation)"
+            t.add_row(f"  [dim]{name}[/]", f"[dim]{fmt(v)}[/]")
+    t.add_row(f"[bold]Net worth on {b}[/]", f"[bold]{fmt(d.end_value, False)}[/]")
+    title = {"try": "TRY", "real": f"real TRY, in {month_label(market.base_month) if market.base_month else '?'} prices",
+             "usd": "US dollars", "gold": "grams of gold"}[unit]
+    console.print(f"[bold]Change in net worth[/] · {title}")
+    console.print(t)
+    if abs(d.residual) > Decimal("0.01"):
+        err.print(f"[red]The parts do not add up (difference {d.residual}); please report this.[/]")
+    if d.unvalued:
+        err.print(f"[yellow]Left out, no price on some days:[/] {', '.join(d.unvalued)}")
+
+
+@app.command("recurring")
+@guarded
+def recurring_cmd(
+    ctx: typer.Context,
+    all_: Annotated[bool, typer.Option("--all", help="Also show series that seem to have stopped")] = False,
+    on: Annotated[Optional[str], typer.Option("--date", help="Judge the status as of this day (default: today)")] = None,
+) -> None:
+    """Recurring payments and income found in the ledger: subscriptions, bills, rent, salary."""
+    from financeproject.core.recurring import ACTIVE, LATE, STOPPED
+    from financeproject.reports.recurring import recurring
+
+    today = day(on)
+    with ledger(ctx) as s:
+        series = recurring(s)
+    shown = [x for x in series if all_ or x.status(today) != STOPPED]
+    if not shown:
+        console.print("No recurring payments found yet (a monthly series needs at least three payments).")
+        return
+    labels = {ACTIVE: "active", LATE: "[yellow]late[/]", STOPPED: "[dim]stopped?[/]"}
+    t = table("", "Payee", "Category", "Every", "Amount>", "Times>", "Last", "Next", "Status")
+    for x in shown:
+        t.add_row(
+            "in" if x.direction > 0 else "out",
+            escape(x.label[:32]),
+            escape(x.category),
+            x.period.name,
+            ("" if x.fixed else "≈ ") + f"{money(x.typical)} {x.commodity}",
+            str(len(x.occurrences)),
+            str(x.last.on),
+            str(x.next_due),
+            labels[x.status(today)],
+        )
+    console.print(t)
+    monthly: dict[str, Decimal] = {}
+    for x in shown:
+        if x.direction < 0 and x.status(today) != STOPPED:
+            monthly[x.commodity] = monthly.get(x.commodity, Decimal(0)) + x.typical * Decimal(30.44 / x.period.days)
+    if monthly:
+        total = " + ".join(f"{money(v, 0)} {c}" for c, v in sorted(monthly.items()))
+        console.print(f"Recurring payments come to about {total} a month. [dim]≈ = the amount varies.[/]")
+
+
+@app.command()
+@guarded
+def upcoming(
+    ctx: typer.Context,
+    days: Annotated[int, typer.Option(help="How many days ahead")] = 30,
+    on: Annotated[Optional[str], typer.Option("--date", help="Look ahead from this day (default: today)")] = None,
+) -> None:
+    """Payments expected in the coming days: recurring payments and card installments."""
+    from financeproject.reports.recurring import upcoming as expected
+
+    today = day(on)
+    with ledger(ctx) as s:
+        items = expected(s, today, days)
+    if not items:
+        console.print("Nothing expected (no recurring payments or installments found).")
+        return
+    t = table("Date", "What", "In>", "Out>", "Unit", "Note")
+    totals: dict[tuple[str, int], Decimal] = {}
+    for u in items:
+        when = f"{u.on:%Y-%m}" if u.kind == "installments" else str(u.on)
+        totals[(u.commodity, u.direction)] = totals.get((u.commodity, u.direction), Decimal(0)) + u.amount
+        t.add_row(
+            when, escape(u.label[:40]), money(u.amount) if u.direction > 0 else "", money(u.amount) if u.direction < 0 else "",
+            u.commodity, escape(u.note),
+        )
+    t.add_section()
+    for commodity in sorted({c for c, _ in totals}):
+        t.add_row(
+            "[bold]Total[/]", "", f"[bold]{money(totals.get((commodity, 1), Decimal(0)))}[/]",
+            f"[bold]{money(totals.get((commodity, -1), Decimal(0)))}[/]", commodity, "",
+        )
+    console.print(f"[bold]Expected[/] · {today} – {today + timedelta(days=days)}")
+    console.print(t)
 
 
 def main() -> None:
