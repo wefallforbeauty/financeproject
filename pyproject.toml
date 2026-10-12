@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "financeproject"
-version = "0.0.0"
+version = "0.1.0"
 description = "Household finance: a double-entry ledger with net worth in four units (TRY, real TRY, USD, grams of gold), Turkish central bank and CPI data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,7 @@ dependencies = [
     "typer>=0.12",
     "rich>=13",
     "platformdirs>=3",
+    "python-calamine>=0.2",
 ]
 
 [project.optional-dependencies]

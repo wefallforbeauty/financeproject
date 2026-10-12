@@ -116,6 +116,9 @@ class Transaction(Base):
     postings: Mapped[list[Posting]] = relationship(
         back_populates="transaction", cascade="all, delete-orphan", order_by="Posting.id"
     )
+    installment_plan: Mapped[InstallmentPlan | None] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Posting(Base):
@@ -129,6 +132,30 @@ class Posting(Base):
     memo: Mapped[str | None] = mapped_column(String(300))
 
     transaction: Mapped[Transaction] = relationship(back_populates="postings")
+    account: Mapped[Account] = relationship()
+
+
+class InstallmentPlan(Base):
+    """A card purchase paid in equal monthly installments (Turkish "taksit").
+
+    The whole purchase is a debt from the day it is made (the transaction books
+    it in full); the plan says in which months the parts fall due.
+    """
+
+    __tablename__ = "installment_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    """The liability (card) account the installments are owed on."""
+    count: Mapped[int] = mapped_column(Integer)
+    first_due: Mapped[dt.date] = mapped_column(Date)
+    """First day of the month in which the first installment is due."""
+    total: Mapped[Decimal] = mapped_column(DecimalText(48))
+
+    transaction: Mapped[Transaction] = relationship(back_populates="installment_plan")
     account: Mapped[Account] = relationship()
 
 

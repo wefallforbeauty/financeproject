@@ -103,7 +103,7 @@ def test_import_preview_and_rules(db, tmp_path):
     out = ok(db, "import", str(path), "--account", "Bonus")
     assert "2 transactions added" in out and "2 uncategorized" in out
     out = ok(db, "import", str(path), "--account", "Bonus")
-    assert "0 transactions added" in out and "2 rows were already in" in out
+    assert "0 transactions added" in out and "2 were already in" in out
     ok(db, "rule", "add", "migros", "Groceries")
     assert "migros" in ok(db, "rule", "list")
     assert "1 transactions categorized" in ok(db, "rule", "apply")
@@ -157,3 +157,73 @@ def test_broken_settings_file_is_a_clear_error(db):
     path.write_text("[evds\napi_key = ", encoding="utf-8")
     result = run(db, "config", "show")
     assert result.exit_code == 1 and "Cannot read the settings file" in result.output
+
+
+def test_statement_import(db, fixtures, tmp_path):
+    ok(db, "init")
+    ok(db, "account", "add", "Assets:Bank:Ziraat Checking", "--kind", "checking")
+    xlsx, html = str(fixtures / "ziraat_statement.xlsx"), str(fixtures / "ziraat_statement.html")
+    result = run(db, "import", xlsx)
+    assert result.exit_code == 1 and "--account" in result.output
+    out = ok(db, "import", xlsx, "--account", "Ziraat", "--opening", "--dry-run")
+    assert "Ziraat Bankası statement" in out and "Dry run" in out and "would be the same" in out
+    out = ok(db, "import", xlsx, "--account", "Ziraat", "--opening")
+    assert "10 transactions added" in out and "the ledger's is the same" in out and "12,500.00" in out
+    out = ok(db, "import", html, "--account", "Ziraat")
+    assert "0 transactions added" in out and "10 were already in" in out
+    csv_path = tmp_path / "s.csv"
+    csv_path.write_text("date,description,amount\n2026-10-01,X,-1\n", encoding="utf-8")
+    result = run(db, "import", str(csv_path), "--account", "Ziraat", "--opening")
+    assert result.exit_code == 1 and "--opening" in result.output
+
+
+@pytest.fixture
+def demo_db(db):
+    out = runner.invoke(app, ["-d", db, "demo", "--synthetic", "--start", "2025-10-01", "--end", "2026-09-30"])
+    assert out.exit_code == 0, out.output
+    return db
+
+
+def test_reports(demo_db, tmp_path):
+    db = demo_db
+    out = ok(db, "income-statement", "--start", "2026-07", "--end", "2026-09")
+    assert "Total income" in out and "Net saving" in out and "Savings rate" in out
+    ok(db, "income-statement", "--start", "2026-07", "--end", "2026-09", "--real", "--csv", str(tmp_path / "i.csv"))
+    assert (tmp_path / "i.csv").exists()
+    out = ok(db, "cash-flow", "--start", "2026-07", "--end", "2026-09")
+    assert "Cash at the start" in out and "Card payments" in out and "Cash at the end" in out
+    ok(db, "sankey", "--month", "2026-09", "--file", str(tmp_path / "s.png"))
+    assert (tmp_path / "s.png").exists()
+    out = ok(db, "ratios", "--date", "2026-09-30")
+    assert "Emergency fund" in out and "Greninger" in out
+    for unit in ("try", "real", "usd", "gold"):
+        out = ok(db, "change", "--month", "2026-09", "--unit", unit)
+        assert "Net saving" in out and "Revaluation" in out
+    assert "NETFLIX.COM" in ok(db, "recurring", "--date", "2026-09-30")
+    assert "Card installments" in ok(db, "upcoming", "--date", "2026-09-30")
+    out = ok(db, "installments", "--date", "2026-09-30")
+    assert "ARCELIK" in out and "Still to come" in out
+
+
+def test_categorize_and_recategorize(demo_db):
+    db = demo_db
+    assert "prequential" in ok(db, "categorize", "--evaluate")
+    assert "Dry run" in ok(db, "categorize", "--dry-run")
+    assert "categorized" in ok(db, "categorize")
+    ok(db, "account", "add", "Expenses:Gifts")
+    ok(db, "expense", "300", "Expenses:Uncategorized", "--from", "Sample Card", "--date", "2026-09-29", "--payee", "FLORIST")
+    out = ok(db, "txn", "list", "--last", "1")
+    number = out.split("│")[1].strip()
+    assert "Expenses:Gifts" in ok(db, "txn", "recategorize", number, "Gifts")
+
+
+def test_installment_expense(db):
+    ok(db, "init")
+    ok(db, "account", "add", "Liabilities:Credit Card:Bonus", "--kind", "credit_card")
+    ok(db, "account", "add", "Expenses:Electronics")
+    out = ok(db, "expense", "9000", "Electronics", "--from", "Bonus", "--installments", "3", "--date", "2026-10-05")
+    assert "in 3 installments from 2026-11" in out
+    result = run(db, "expense", "10", "Electronics", "--from", "Bonus", "--first-due", "2026-11")
+    assert result.exit_code == 1 and "--installments" in result.output
+    out = ok(db, "installments", "--date", "2026-10-31")
+    assert "3,000.00" in out and "0/3" in out

@@ -11,27 +11,19 @@ the holder's point of view: negative = money out (a purchase, including one made
 with a credit card), positive = money in (salary, a card payment received). Both
 legs follow from that sign, for asset and for liability accounts alike.
 
-``counter_account`` (the other side) may be empty: the categorization rules then
-pick it, and if none matches the row goes to ``Expenses:Uncategorized`` or
-``Income:Uncategorized``.
-
-Every row gets an import key (hash of account, date, amount, description and
-the row's occurrence number among identical rows), so importing the same or an
-overlapping statement again adds nothing twice. An import is all or nothing:
-if any row is invalid, nothing is written and all errors are listed.
+``counter_account`` (the other side) may be empty: the categorization rules or
+the learned model then pick it. Categories, duplicate keys and the
+all-or-nothing write are in ``ingest.importer``.
 """
 
 from __future__ import annotations
 
 import csv
-import hashlib
-from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from financeproject.core.dates import parse_date
@@ -42,21 +34,16 @@ from financeproject.core.money import (
 )
 from financeproject.core.text import fold
 from financeproject.errors import FinanceError
-from financeproject.ingest.rules import load_rules, match
-from financeproject.ledger.accounts import find_account
-from financeproject.ledger.db import UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME
-from financeproject.ledger.models import Transaction
-from financeproject.ledger.transactions import Leg, add_transaction
+from financeproject.ingest import learn
+from financeproject.ingest.importer import ImportResult, Row, import_key, import_rows
+from financeproject.ingest.tables import FALLBACK_ENCODINGS, decode
 
 FIELDS = (
     "date", "description", "amount", "inflow", "outflow",
     "account", "counter_account", "commodity", "payee", "note",
 )
 AMOUNT_FIELDS = ("amount", "inflow", "outflow")
-FALLBACK_ENCODINGS = ("utf-8-sig", "cp1254", "iso-8859-9")
-"""UTF-8, then the Turkish Windows and ISO code pages common in bank exports."""
-
-HOW_FILE, HOW_UNCATEGORIZED = "file", "uncategorized"
+__all__ = ["FALLBACK_ENCODINGS", "CsvFormat", "Row", "import_csv", "import_key", "parse_column_map", "read_rows"]
 
 
 @dataclass
@@ -90,33 +77,9 @@ def parse_column_map(text: str) -> dict[str, str]:
     return out
 
 
-@dataclass(frozen=True, slots=True)
-class Row:
-    line: int
-    date: date
-    description: str
-    amount: Decimal
-    account: str | None
-    counter_account: str | None
-    commodity: str | None
-    payee: str | None
-    note: str | None
-
-
-def _decode(data: bytes, encoding: str | None) -> tuple[str, str]:
-    if encoding:
-        return data.decode(encoding), encoding
-    for enc in FALLBACK_ENCODINGS:
-        try:
-            return data.decode(enc), enc
-        except UnicodeDecodeError:
-            continue
-    raise FinanceError("Cannot tell the character encoding of the file; give it with --encoding.")  # pragma: no cover
-
-
 def read_rows(path: Path, fmt: CsvFormat) -> tuple[list[Row], list[str], str]:
     """Parse the file. Returns rows, error messages and the encoding used."""
-    text, encoding = _decode(Path(path).read_bytes(), fmt.encoding)
+    text, encoding = decode(Path(path).read_bytes(), fmt.encoding)
     lines = text.splitlines()[fmt.skip_rows :]
     if not lines:
         raise FinanceError("The file is empty.")
@@ -202,53 +165,14 @@ def read_rows(path: Path, fmt: CsvFormat) -> tuple[list[Row], list[str], str]:
     return rows, errors, encoding
 
 
-def import_key(account_path: str, row: Row, occurrence: int) -> str:
-    amount = format(row.amount.normalize(), "f")
-    raw = f"{fold(account_path)}|{row.date.isoformat()}|{amount}|{fold(row.description)}|{occurrence}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
-
-
-@dataclass(frozen=True, slots=True)
-class PreviewRow:
-    line: int
-    date: date
-    description: str
-    amount: Decimal
-    commodity: str
-    account: str
-    counter_account: str
-    how: str
-    """``file`` (given in the file), ``rule #n`` or ``uncategorized``."""
-    duplicate: bool
-
-
-@dataclass
-class ImportResult:
-    path: Path
-    encoding: str
-    rows: list[PreviewRow] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
-    written: bool = False
-
-    @property
-    def added(self) -> int:
-        return sum(1 for r in self.rows if not r.duplicate) if self.written else 0
-
-    @property
-    def duplicates(self) -> int:
-        return sum(1 for r in self.rows if r.duplicate)
-
-    @property
-    def uncategorized(self) -> int:
-        return sum(1 for r in self.rows if not r.duplicate and r.how == HOW_UNCATEGORIZED)
-
-
 def import_csv(
     session: Session,
     path: Path,
     fmt: CsvFormat | None = None,
     account: str | None = None,
     dry_run: bool = False,
+    use_model: bool = True,
+    min_confidence: float = learn.DEFAULT_MIN_CONFIDENCE,
 ) -> ImportResult:
     """Import ``path``. ``account`` is used for rows without an ``account`` value.
 
@@ -256,62 +180,15 @@ def import_csv(
     """
     fmt = fmt or CsvFormat()
     rows, errors, encoding = read_rows(Path(path), fmt)
-    result = ImportResult(Path(path), encoding, errors=errors)
-    rules = load_rules(session)
-    default_account = find_account(session, account) if account else None
-    uncategorized_expense = find_account(session, UNCATEGORIZED_EXPENSE)
-    uncategorized_income = find_account(session, UNCATEGORIZED_INCOME)
-    seen: Counter[tuple] = Counter()
-    pending: list[tuple[Row, object, object, str]] = []
-
-    for row in rows:
-        try:
-            acc = find_account(session, row.account) if row.account else default_account
-            if acc is None:
-                raise FinanceError("no account (the file needs an 'account' column, or give --account)")
-            if row.counter_account:
-                counter, how = find_account(session, row.counter_account), HOW_FILE
-            elif rule := match(rules, " ".join(filter(None, [row.description, row.payee]))):
-                counter, how = rule.account, f"rule #{rule.rule_id}"
-            else:
-                counter = uncategorized_expense if row.amount < 0 else uncategorized_income
-                how = HOW_UNCATEGORIZED
-            base = (acc.id, row.date, row.amount.normalize(), fold(row.description))
-            seen[base] += 1
-            key = import_key(acc.path, row, seen[base])
-            duplicate = session.scalar(select(Transaction.id).where(Transaction.import_key == key)) is not None
-            commodity = acc.commodity_code or row.commodity or "TRY"
-            result.rows.append(
-                PreviewRow(row.line, row.date, row.description, row.amount, commodity, acc.path, counter.path, how, duplicate)
-            )
-            if not duplicate:
-                pending.append((row, acc, counter, key))
-        except FinanceError as exc:
-            result.errors.append(f"line {row.line}: {exc}")
-
-    if result.errors or dry_run:
-        return result
-
-    source = f"csv:{Path(path).name}"[:80]
-    for row, acc, counter, key in pending:
-        try:
-            add_transaction(
-                session,
-                row.date,
-                row.description,
-                [
-                    Leg(acc, row.amount, commodity=row.commodity),
-                    Leg(counter, -row.amount, commodity=acc.commodity_code or row.commodity),
-                ],
-                payee=row.payee,
-                note=row.note,
-                source=source,
-                import_key=key,
-            )
-        except FinanceError as exc:
-            result.errors.append(f"line {row.line}: {exc}")
-    if result.errors:
-        session.rollback()
-        return result
-    result.written = True
-    return result
+    return import_rows(
+        session,
+        rows,
+        path=Path(path),
+        source=f"CSV, {encoding}",
+        transaction_source=f"csv:{Path(path).name}"[:80],
+        account=account,
+        errors=errors,
+        dry_run=dry_run,
+        use_model=use_model,
+        min_confidence=min_confidence,
+    )

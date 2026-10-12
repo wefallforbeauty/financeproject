@@ -73,22 +73,18 @@ def match(rules: list[CompiledRule], text: str) -> CompiledRule | None:
     return None
 
 
-def apply_rules_to_uncategorized(session: Session) -> list[tuple[Transaction, Account]]:
-    """Move postings from the ``Uncategorized`` accounts to the account of the first matching rule."""
+def rule_matches(session: Session) -> list[tuple[Transaction, Posting, CompiledRule]]:
+    """Uncategorized postings and the first rule that matches their transaction."""
     rules = load_rules(session)
     if not rules:
         return []
     placeholders = [
-        a for a in session.scalars(select(Account).where(Account.path.in_([UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME])))
+        a.id for a in session.scalars(select(Account).where(Account.path.in_([UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME])))
     ]
-    if not placeholders:
-        return []
-    moved: list[tuple[Transaction, Account]] = []
     postings = session.scalars(
-        select(Posting).where(Posting.account_id.in_([a.id for a in placeholders])).options(
-            selectinload(Posting.transaction)
-        )
+        select(Posting).where(Posting.account_id.in_(placeholders)).options(selectinload(Posting.transaction))
     )
+    out = []
     for posting in postings:
         tx = posting.transaction
         rule = match(rules, " ".join(filter(None, [tx.description, tx.payee])))
@@ -99,6 +95,14 @@ def apply_rules_to_uncategorized(session: Session) -> list[tuple[Transaction, Ac
                 f"Rule #{rule.rule_id} points to {rule.account.path}, but transaction #{tx.id} "
                 f"is in {posting.commodity_code}."
             )
+        out.append((tx, posting, rule))
+    return out
+
+
+def apply_rules_to_uncategorized(session: Session) -> list[tuple[Transaction, Account]]:
+    """Move postings from the ``Uncategorized`` accounts to the account of the first matching rule."""
+    moved: list[tuple[Transaction, Account]] = []
+    for tx, posting, rule in rule_matches(session):
         posting.account = rule.account
         moved.append((tx, rule.account))
     session.flush()

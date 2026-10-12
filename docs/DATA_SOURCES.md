@@ -1,7 +1,8 @@
 # Data sources
 
 Which data come from where, why that source was chosen, and what to watch
-out for. As of 2026-10-09.
+out for. Prices and the CPI as of 2026-10-09, bank statements as of
+2026-10-12.
 
 ## In use
 
@@ -84,6 +85,41 @@ published as an HTML table. The program reads the table and chains the
 monthly changes (see [METHOD.md](METHOD.md) §5.2). If the page layout changes,
 the program stops with a clear error.
 
+## Bank statements
+
+### Ziraat Bankası account statements
+
+Internet banking offers the account movements ("Hesap Hareketleri") of a
+period as Excel (.xlsx) or HTML. Both hold the same table; the template was
+written after a real export of October 2026 and is tested on made-up
+statements with the same layout (`tests/fixtures/make_ziraat_samples.py`).
+
+| | Excel (.xlsx) | HTML |
+|---|---|---|
+| Columns | Tarih, Fiş No, Açıklama, İşlem Tutarı, Bakiye | Tarih, Fiş No, Açıklama, Tutar, Bakiye |
+| Order | newest first | newest first |
+| Dates | text, `DD.MM.YYYY` | text, `DD.MM.YYYY` |
+| Amounts | numbers (`-389.9`) | Turkish text (`-1.234,56`) |
+| Period | "`01.09.2026 - 30.09.2026` tarihleri arasındaki…" | `Dönem : 01.09.2026-30.09.2026` |
+| Currency | last word of the account number line (`TL`) | `Döviz Cinsi : TRY` |
+| Totals | `Borç:-20.775,45` and `Alacak:50.000` in one cell each | `Borç:` and `Alacak:` with the amount in the amount column |
+| Other | logo, account holder, IBAN, legal footer | account holder, branch, address, IBAN; a bot-protection script before the page |
+
+- **Receipt number (Fiş No):** the bank's number for each line. It makes the
+  import key independent of the description, so the Excel and HTML downloads
+  of the same period give the same keys.
+- **Descriptions:** card purchases read
+  `POS ALIŞVERİŞ KART NO: 4000 **** **** 0000 İŞYERİ: <merchant> MUTABAKAT: <number>`
+  (online: `SANAL POS ALIŞVERİŞ …`), mobile transfers
+  `<name> Ziraat Mobil Havale`. The merchant and the name become the payee.
+  Other kinds of lines are imported with their description as it is.
+- **The Excel file** is written by a generator that leaves out the cell
+  references and puts an empty `<fill/>` into the style sheet. openpyxl refuses
+  the file; python-calamine (a reader written in Rust, also used by pandas)
+  opens it, and the cells are placed in order.
+- **Personal data** in the header (name, address, IBAN, account number) is not
+  read; only the table, the period, the currency and the totals are.
+
 ## Tried and not chosen for now
 
 | Source | For | Why not for now |
@@ -95,6 +131,7 @@ the program stops with a clear error.
 | Frankfurter's TCMB provider | past rates in one request | It gives the middle rate, not forex buying, and shifts dates by one day from the bulletin date. Could be an option for a fast first load. |
 | `borsapy`, `borsa-mcp` | BIST, TEFAS, gold, currencies | Broad, but they use unofficial endpoints and are for personal and educational use. To be used as a map of data sources in 03. |
 | `evdspy` | EVDS | A heavy package. A thin client does the same (`prices/evds.py`). |
+| openpyxl | reading bank Excel files | Refuses Ziraat Bankası's export (an empty fill in its style sheet); python-calamine reads it. |
 | Open banking (ÖHVPS, HBHS) | bank transactions | Access is only for service providers licensed by TCMB; individuals get no API keys. That is why statements are imported. |
 
 ## Sources for later versions

@@ -1,8 +1,15 @@
 # Update log
 
-## Unreleased
+## 01 (2026-10-12)
 
-### Name, language and platforms
+Pull requests #2 and #3. The project got its new name and became English and
+platform-neutral; then version 01 brought bank statements in and explained
+where the money goes: the Ziraat Bankası template, a learned categorizer,
+installments, the income statement, the cash flow statement, a Sankey
+diagram, recurring payments, household ratios and the decomposition of net
+worth changes.
+
+### Name, language and platforms (#2)
 
 - The project is now called **financeproject** (it was Hane-Finans). The
   GitHub repository, the Python package (`financeproject`) and the command
@@ -26,9 +33,103 @@
   message (schema version 2).
 - Fixed: account paths such as `Assets:Bank:Checking` were printed with an
   emoji, because the terminal library read `:bank:` as an emoji code.
+- The calculations did not change: on the same made-up household, version 00
+  and the renamed code give identical net worth tables.
 
-The calculations did not change: on the same made-up household, version 00 and
-this version give identical net worth tables.
+### Bank statements
+
+- **Ziraat Bankası** account statements, as .xlsx or .html
+  (`ingest/banks/ziraat.py`), written after a real export:
+  - the lines are put oldest first; the bank's running balance must add up
+    line by line and the printed debit and credit totals must match,
+    otherwise nothing is imported;
+  - the merchant of card purchases and the other person of mobile transfers
+    become the payee;
+  - the bank's receipt number goes into the import key, so the Excel and HTML
+    downloads of the same period, or overlapping periods, are imported once;
+  - only the table, the period, the currency and the totals are read; the
+    account holder's name, address and IBAN are not.
+- `finance import FILE --account ACCOUNT` recognizes the bank. `--opening`
+  starts a new account at the balance before the statement's first line.
+  After the import the ledger's balance is compared with the bank's closing
+  balance (predicted on a dry run).
+- Excel files are read with python-calamine; openpyxl refuses Ziraat's export.
+- `tests/fixtures/make_ziraat_samples.py` writes made-up statements that copy
+  the layout and the quirks of the real export (no cell references, an empty
+  fill in the style sheet, a bot-protection script in the HTML).
+- The CSV import and the statement import share one writer
+  (`ingest/importer.py`): categories, duplicate keys, all or nothing.
+
+### Categories
+
+- A **learned categorizer** (`ingest/learn.py`): boolean multinomial naive
+  Bayes on the words of the description and the payee, the whole payee, the
+  account and the size of the amount. It learns from the ledger's own
+  categorized transactions and is used after the rules, when it is at least
+  80 % sure.
+- `finance categorize` applies the rules and then the model to uncategorized
+  transactions (`--dry-run` previews). `--evaluate` walks the ledger in date
+  order and guesses each transaction from the earlier ones (prequential
+  evaluation). On the demo household: 88.6 % right overall, 75.1 % of the
+  guesses reached 80 %, and 98.1 % of those were right.
+- `finance txn recategorize ID ACCOUNT` moves a simple transaction to another
+  category; the model learns from the correction.
+- `finance rule apply` is unchanged; rules can now be previewed.
+
+### Installments
+
+- `finance expense AMOUNT CATEGORY --from CARD --installments N [--first-due
+  YYYY-MM]` books the purchase in full and stores its installment plan
+  (`ledger/installments.py`, table `installment_plans`). The amount is split
+  into equal parts, the remainder going to the first.
+- `finance installments` lists the plans, the installments due in the coming
+  months, and each card's balance split into installments of later months
+  and the rest.
+
+### Reports
+
+- **Income statement** (`finance income-statement`): income and expenses by
+  category and month, net saving and savings rate; `--depth`, `--real`,
+  `--csv`.
+- **Cash flow statement** (`finance cash-flow`): cash at the start and end of
+  each month of the tier 0 accounts, with income received, expenses paid,
+  investing, card payments, loans, exchange results and the revaluation of
+  foreign currency cash (IAS 7).
+- **Sankey diagram** (`finance sankey`, PNG): income sources → budget →
+  expense categories and savings.
+- **Change in net worth** (`finance change`): income, expenses, net saving,
+  exchange results, opening balances and the revaluation of each commodity,
+  in TRY, real TRY (with the inflation loss on the lira), USD or grams of
+  gold. The split is exact (summation by parts; `core/decompose.py`).
+- **Household ratios** (`finance ratios`): emergency fund, savings rate, debt
+  payments, liquid and investment assets over net worth, inflation protection
+  and debt over assets, with the benchmarks of Greninger et al. (1996).
+- **Recurring payments** (`finance recurring`) found from the median gap and
+  regularity of each payee's transactions, and the payments expected next
+  (`finance upcoming`), card installments included.
+
+### Demo household
+
+- Shops as payees, two streaming subscriptions (one gets more expensive), a
+  phone and an internet bill, a laptop in 6 and a washing machine in 9
+  installments; the card is paid for the month's purchases plus the
+  installments due. In the last two months a third of the card purchases stay
+  uncategorized, for `finance categorize` to fix.
+
+### Behaviour changes
+
+- `finance import` takes bank statements as well as CSV files; its summary
+  says "N were already in" and reports the learned categories.
+- New dependency: `python-calamine`.
+- The ledger gets a new table, `installment_plans`; existing ledgers of
+  schema version 2 get it automatically when opened.
+
+### Tests
+
+- 158 tests (110 before): statements and the Ziraat template, the
+  categorizer, installments, the decomposition (a hand-worked example and a
+  property test on random ledgers), the income and cash flow statements,
+  ratios, recurring payments, the Sankey diagram and the new commands.
 
 ## 00 (2026-10-09)
 
