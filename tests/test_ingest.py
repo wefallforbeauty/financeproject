@@ -1,4 +1,4 @@
-"""CSV import, duplicate detection and categorisation rules."""
+"""CSV import, duplicate detection and categorization rules."""
 
 from datetime import date
 from decimal import Decimal
@@ -6,48 +6,50 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from hane_finans.core.kinds import EXPENSE, INCOME
-from hane_finans.errors import FinansError
-from hane_finans.ingest.csvfile import (
+from financeproject.core.kinds import ASSET, EXPENSE, INCOME, LIABILITY
+from financeproject.errors import FinanceError
+from financeproject.ingest.csvfile import (
     CsvFormat,
+    Row,
     import_csv,
     import_key,
     parse_column_map,
     read_rows,
 )
-from hane_finans.ingest.rules import (
+from financeproject.ingest.rules import (
     add_rule,
-    apply_rules_to_uncategorised,
+    apply_rules_to_uncategorized,
     load_rules,
     match,
 )
-from hane_finans.ledger.accounts import create_account
-from hane_finans.ledger.models import Transaction
-from hane_finans.ledger.queries import commodity_totals, positions_at
+from financeproject.ledger.accounts import create_account
+from financeproject.ledger.models import Transaction
+from financeproject.ledger.queries import commodity_totals, positions_at
+from financeproject.ledger.transactions import Leg, add_transaction
 
-STANDARD = """tarih;aciklama;tutar;hesap;karsi_hesap;birim;karsi_taraf;not
-2026-10-01;MİGROS KONYA;-450,00;Bonus;;;;
-2026-10-02;Maaş Ekim;65.000,00;Vadesiz;Gelir:Maaş;;Şirket;
-2026-10-03;Kart ödemesi;-450,00;Vadesiz;Bonus;;;
-2026-10-04;KAHVE DÜNYASI;-95,50;Bonus;;;;
-2026-10-04;KAHVE DÜNYASI;-95,50;Bonus;;;;ikinci kahve
-2026-10-05;BİLİNMEYEN YER;-10,00;Bonus;;;;
+STANDARD = """date,description,amount,account,counter_account,commodity,payee,note
+2026-10-01,MİGROS KONYA,-450.00,Bonus,,,,
+2026-10-02,October salary,"65,000.00",Checking,Income:Salary,,Employer,
+2026-10-03,Card payment,-450.00,Checking,Bonus,,,
+2026-10-04,KAHVE DÜNYASI,-95.50,Bonus,,,,
+2026-10-04,KAHVE DÜNYASI,-95.50,Bonus,,,,second coffee
+2026-10-05,UNKNOWN PLACE,-10.00,Bonus,,,,
 """
 
 
 @pytest.fixture
 def ledger(session):
-    create_account(session, "Varlık:Banka:Vadesiz", kind="vadesiz")
-    create_account(session, "Borç:Kredi Kartı:Bonus", kind="kredi_karti")
-    create_account(session, "Gider:Gıda:Market")
-    create_account(session, "Gider:Gıda:Kahve")
-    create_account(session, "Gelir:Maaş")
-    add_rule(session, "migros", "Market")
-    add_rule(session, r"kahve\s+dunyasi", "Kahve", is_regex=True)
+    create_account(session, "Assets:Bank:Checking", kind="checking")
+    create_account(session, "Liabilities:Credit Card:Bonus", kind="credit_card")
+    create_account(session, "Expenses:Food:Groceries")
+    create_account(session, "Expenses:Food:Coffee")
+    create_account(session, "Income:Salary")
+    add_rule(session, "migros", "Groceries")
+    add_rule(session, r"kahve\s+dunyasi", "Coffee", is_regex=True)
     return session
 
 
-def write(tmp_path, text, name="ekstre.csv", encoding="utf-8"):
+def write(tmp_path, text, name="statement.csv", encoding="utf-8"):
     path = tmp_path / name
     path.write_bytes(text.encode(encoding))
     return path
@@ -62,15 +64,15 @@ def test_standard_import_with_rules_and_duplicates(ledger, tmp_path):
     path = write(tmp_path, STANDARD)
     result = import_csv(s, path)
     assert result.errors == [] and result.written
-    assert result.added == 6 and result.duplicates == 0 and result.uncategorised == 1
+    assert result.added == 6 and result.duplicates == 0 and result.uncategorized == 1
     how = [r.how for r in result.rows]
-    assert how[0].startswith("kural #") and how[1] == "dosya" and how[3].startswith("kural #") and how[5] == "kategorisiz"
-    balances = {p.account: p.quantity for p in positions_at(s, date(2026, 10, 31), types=("varlik", "borc", EXPENSE, INCOME))}
-    assert balances["Gider:Gıda:Market"] == Decimal("450.00")
-    assert balances["Gider:Gıda:Kahve"] == Decimal("191.00")  # both identical coffees are kept
-    assert balances["Gider:Kategorisiz"] == Decimal("10.00")
-    assert balances["Borç:Kredi Kartı:Bonus"] == Decimal("-201.00")  # 450 + 191 + 10 spent, 450 paid
-    assert balances["Varlık:Banka:Vadesiz"] == Decimal("64550.00")
+    assert how[0].startswith("rule #") and how[1] == "file" and how[3].startswith("rule #") and how[5] == "uncategorized"
+    balances = {p.account: p.quantity for p in positions_at(s, date(2026, 10, 31), types=(ASSET, LIABILITY, EXPENSE, INCOME))}
+    assert balances["Expenses:Food:Groceries"] == Decimal("450.00")
+    assert balances["Expenses:Food:Coffee"] == Decimal("191.00")  # both identical coffees are kept
+    assert balances["Expenses:Uncategorized"] == Decimal("10.00")
+    assert balances["Liabilities:Credit Card:Bonus"] == Decimal("-201.00")  # 450 + 191 + 10 spent, 450 paid
+    assert balances["Assets:Bank:Checking"] == Decimal("64550.00")
     assert all(v == 0 for v in commodity_totals(s).values())
 
     again = import_csv(s, path)
@@ -85,21 +87,21 @@ def test_dry_run_writes_nothing(ledger, tmp_path):
 
 
 def test_invalid_rows_abort_the_whole_import(ledger, tmp_path):
-    text = STANDARD + "2026-10-06;Bozuk satır;on beş lira;Bonus;;;;\n2026-13-01;Tarih yanlış;-5;Bonus;;;;\n"
+    text = STANDARD + "2026-10-06,Broken row,fifteen lira,Bonus,,,,\n2026-13-01,Wrong date,-5,Bonus,,,,\n"
     result = import_csv(ledger, write(tmp_path, text))
     assert len(result.errors) == 2 and not result.written
-    assert result.errors[0].startswith("satır 8")
+    assert result.errors[0].startswith("line 8")
     assert tx_count(ledger) == 0
 
 
 def test_unknown_account_is_an_error(ledger, tmp_path):
-    result = import_csv(ledger, write(tmp_path, "tarih;aciklama;tutar;hesap\n2026-10-01;x;-1;Yok Böyle\n"))
-    assert result.errors and "bulunamadı" in result.errors[0]
+    result = import_csv(ledger, write(tmp_path, "date;description;amount;account\n2026-10-01;x;-1;No Such\n"))
+    assert result.errors and "No account matches" in result.errors[0]
 
 
 def test_bank_layout_with_mapping(ledger, tmp_path):
-    """Windows-1254 file, two lines of account info above the header, separate
-    debit/credit columns, Turkish dates and decimal commas."""
+    """Windows-1254 file, two lines of account details above the header,
+    separate debit/credit columns, Turkish dates and decimal commas."""
     text = (
         "Hesap No: TR00 0000;;;\n"
         "Dönem: Ekim 2026;;;\n"
@@ -110,63 +112,73 @@ def test_bank_layout_with_mapping(ledger, tmp_path):
     path = write(tmp_path, text, encoding="cp1254")
     fmt = CsvFormat(
         date_format="%d.%m.%Y",
-        columns=parse_column_map("tarih=İşlem Tarihi,aciklama=Açıklama,cikis=Borç,giris=Alacak"),
+        columns=parse_column_map("date=İşlem Tarihi,description=Açıklama,outflow=Borç,inflow=Alacak"),
         skip_rows=2,
     )
     rows, errors, encoding = read_rows(path, fmt)
     assert errors == [] and encoding == "cp1254"
     assert [(r.date, r.amount) for r in rows] == [(date(2026, 10, 1), Decimal("-1250.75")), (date(2026, 10, 2), Decimal("65000.00"))]
-    result = import_csv(ledger, path, fmt, account="Vadesiz")
+    result = import_csv(ledger, path, fmt, account="Checking")
     assert result.written and result.added == 2
-    assert [r.counter_account for r in result.rows] == ["Gider:Gıda:Market", "Gelir:Kategorisiz"]
+    assert [r.counter_account for r in result.rows] == ["Expenses:Food:Groceries", "Income:Uncategorized"]
+
+
+def test_decimal_separator_is_detected_per_file(ledger, tmp_path):
+    turkish = "date;description;amount\n2026-10-01;MIGROS;-1.234,50\n2026-10-02;X;-7\n"
+    rows, errors, _ = read_rows(write(tmp_path, turkish), CsvFormat())
+    assert errors == [] and [r.amount for r in rows] == [Decimal("-1234.50"), Decimal("-7")]
+    english = "date,description,amount\n2026-10-01,MIGROS,\"-1,234.50\"\n"
+    rows, _, _ = read_rows(write(tmp_path, english), CsvFormat())
+    assert rows[0].amount == Decimal("-1234.50")
+    ambiguous = "date,description,amount\n2026-10-01,MIGROS,-1.234\n"
+    with pytest.raises(FinanceError, match="decimal separator"):
+        read_rows(write(tmp_path, ambiguous), CsvFormat())
+    rows, _, _ = read_rows(write(tmp_path, ambiguous), CsvFormat(decimal_sep=","))
+    assert rows[0].amount == Decimal("-1234")
 
 
 def test_invert_sign_and_autodetected_delimiter(ledger, tmp_path):
-    text = "tarih,aciklama,tutar\n2026-10-01,MIGROS,\"1.000,00\"\n"
-    fmt = CsvFormat(delimiter=None, invert_sign=True)
+    text = "date,description,amount\n2026-10-01,MIGROS,\"1.000,00\"\n"
+    fmt = CsvFormat(invert_sign=True)
     result = import_csv(ledger, write(tmp_path, text), fmt, account="Bonus")
     assert result.written and result.rows[0].amount == Decimal("-1000.00")
 
 
 def test_layout_errors(tmp_path):
-    with pytest.raises(FinansError, match="tarih ve aciklama"):
+    with pytest.raises(FinanceError, match="date and description"):
         read_rows(write(tmp_path, "a;b\n1;2\n"), CsvFormat())
-    with pytest.raises(FinansError, match="'Tutar X' sütunu"):
-        read_rows(write(tmp_path, "tarih;aciklama\n"), CsvFormat(columns={"tutar": "Tutar X"}))
-    with pytest.raises(FinansError, match="tutar"):
-        read_rows(write(tmp_path, "tarih;aciklama\n2026-10-01;x\n"), CsvFormat())
-    with pytest.raises(FinansError):
-        parse_column_map("tarih")
-    with pytest.raises(FinansError, match="Bilinmeyen alan"):
-        parse_column_map("tutarr=Tutar")
+    with pytest.raises(FinanceError, match="'Amount X' column"):
+        read_rows(write(tmp_path, "date;description\n"), CsvFormat(delimiter=";", columns={"amount": "Amount X"}))
+    with pytest.raises(FinanceError, match="amount"):
+        read_rows(write(tmp_path, "date;description\n2026-10-01;x\n"), CsvFormat())
+    with pytest.raises(FinanceError):
+        parse_column_map("date")
+    with pytest.raises(FinanceError, match="Unknown field"):
+        parse_column_map("amout=Amount")
 
 
 def test_import_key_is_stable_and_order_sensitive():
-    from hane_finans.ingest.csvfile import Row
-
     row = Row(2, date(2026, 10, 1), "MİGROS", Decimal("-450.00"), None, None, None, None, None)
     same = Row(9, date(2026, 10, 1), "migros", Decimal("-450.0"), None, None, None, None, None)
-    assert import_key("Borç:Kart", row, 1) == import_key("borc:kart", same, 1)
-    assert import_key("Borç:Kart", row, 1) != import_key("Borç:Kart", row, 2)
+    assert import_key("Liabilities:Card", row, 1) == import_key("liabilities:card", same, 1)
+    assert import_key("Liabilities:Card", row, 1) != import_key("Liabilities:Card", row, 2)
 
 
-def test_rules_priority_folding_and_recategorisation(ledger):
+def test_rules_priority_folding_and_recategorization(ledger):
     s = ledger
-    create_account(s, "Gider:Gıda:Restoran")
-    add_rule(s, "MİGROS JET", "Restoran", priority=5)  # more specific, tried first
+    create_account(s, "Expenses:Food:Restaurants")
+    add_rule(s, "MİGROS JET", "Restaurants", priority=5)  # more specific, tried first
     rules = load_rules(s)
-    assert match(rules, "migros jet kadikoy").account.path == "Gider:Gıda:Restoran"
-    assert match(rules, "Migros Konya").account.path == "Gider:Gıda:Market"
-    assert match(rules, "baska") is None
-    with pytest.raises(FinansError):
-        add_rule(s, "(", "Market", is_regex=True)
-    with pytest.raises(FinansError):
-        add_rule(s, "  ", "Market")
+    assert match(rules, "migros jet kadikoy").account.path == "Expenses:Food:Restaurants"
+    assert match(rules, "Migros Konya").account.path == "Expenses:Food:Groceries"
+    assert match(rules, "elsewhere") is None
+    with pytest.raises(FinanceError):
+        add_rule(s, "(", "Groceries", is_regex=True)
+    with pytest.raises(FinanceError):
+        add_rule(s, "  ", "Groceries")
 
-    from hane_finans.ledger.transactions import Leg, add_transaction
-
-    add_transaction(s, date(2026, 10, 1), "BİM MARKET", [Leg("Gider:Kategorisiz", Decimal("80")), Leg("Bonus", None)])
-    assert apply_rules_to_uncategorised(s) == []
-    add_rule(s, "bim", "Market")
-    moved = apply_rules_to_uncategorised(s)
-    assert [(tx.description, acc.path) for tx, acc in moved] == [("BİM MARKET", "Gider:Gıda:Market")]
+    add_transaction(s, date(2026, 10, 1), "BİM MARKET", [Leg("Expenses:Uncategorized", Decimal("80")), Leg("Bonus", None)])
+    assert apply_rules_to_uncategorized(s) == []
+    add_rule(s, "bim", "Groceries")
+    moved = apply_rules_to_uncategorized(s)
+    assert [(tx.description, acc.path) for tx, acc in moved] == [("BİM MARKET", "Expenses:Food:Groceries")]

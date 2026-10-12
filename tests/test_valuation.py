@@ -6,9 +6,14 @@ from decimal import Decimal
 import pytest
 from conftest import simple_book
 
-from hane_finans.core.inflation import Deflator
-from hane_finans.core.prices import TROY_OUNCE_GRAMS, PriceBook, Quote
-from hane_finans.core.valuation import Position, liquidity, net_worth, value_positions
+from financeproject.core.inflation import Deflator
+from financeproject.core.prices import TROY_OUNCE_GRAMS, PriceBook, Quote
+from financeproject.core.valuation import (
+    Position,
+    liquidity,
+    net_worth,
+    value_positions,
+)
 
 
 def test_latest_is_as_of():
@@ -34,9 +39,9 @@ def test_resolve_direct_cross_and_base():
 def test_resolve_prefers_the_freshest_route():
     book = PriceBook(
         [
-            Quote("EUR", "TRY", date(2026, 1, 1), Decimal("45"), "eski"),
-            Quote("EUR", "USD", date(2026, 3, 1), Decimal("1.2"), "yeni"),
-            Quote("USD", "TRY", date(2026, 3, 1), Decimal("40"), "yeni"),
+            Quote("EUR", "TRY", date(2026, 1, 1), Decimal("45"), "old"),
+            Quote("EUR", "USD", date(2026, 3, 1), Decimal("1.2"), "new"),
+            Quote("USD", "TRY", date(2026, 3, 1), Decimal("40"), "new"),
         ]
     )
     r = book.resolve("EUR", date(2026, 3, 5))
@@ -50,20 +55,20 @@ def test_troy_ounce():
 
 def positions():
     return [
-        Position(1, "Varlık:Banka:TL", "varlik", "TRY", Decimal("1000"), "vadesiz", "Ben", 0),
-        Position(2, "Varlık:Döviz:USD", "varlik", "USD", Decimal("100"), "doviz", "Ben", 0),
-        Position(3, "Varlık:Altın", "varlik", "XAU_G", Decimal("10"), "altin", "ortak", 1),
-        Position(4, "Borç:Kart", "borc", "TRY", Decimal("-300"), "kredi_karti", "Ben"),
-        Position(5, "Borç:Konut", "borc", "TRY", Decimal("-5000"), "konut_kredisi", "Ben"),
+        Position(1, "Assets:Bank:TRY", "asset", "TRY", Decimal("1000"), "checking", "Me", 0),
+        Position(2, "Assets:FX:USD", "asset", "USD", Decimal("100"), "fx", "Me", 0),
+        Position(3, "Assets:Gold", "asset", "XAU_G", Decimal("10"), "gold", "shared", 1),
+        Position(4, "Liabilities:Card", "liability", "TRY", Decimal("-300"), "credit_card", "Me"),
+        Position(5, "Liabilities:Mortgage", "liability", "TRY", Decimal("-5000"), "mortgage", "Me"),
     ]
 
 
 def test_net_worth_in_four_units():
-    """Assets 1 000 + 100·40 + 10·(100·40) = 45 000 TL; debts 5 300 TL; net 39 700 TL."""
+    """Assets 1,000 + 100·40 + 10·(100·40) = 45,000 TRY; debts 5,300 TRY; net 39,700 TRY."""
     book = simple_book()
     at = date(2026, 3, 1)
     valued = value_positions(positions(), book, at, max_age_days=365)
-    deflator = Deflator({date(2026, 3, 1): 100.0, date(2026, 4, 1): 110.0}, method="aylik")
+    deflator = Deflator({date(2026, 3, 1): 100.0, date(2026, 4, 1): 110.0}, method="monthly")
     nw = net_worth(valued, book, at, deflator)
     assert nw.assets == Decimal("45000")
     assert nw.liabilities == Decimal("5300")
@@ -78,10 +83,10 @@ def test_net_worth_in_four_units():
 def test_missing_and_stale_prices_are_reported():
     book = simple_book()
     at = date(2026, 3, 1)
-    extra = Position(6, "Varlık:Fon:ABC", "varlik", "TEFAS.ABC", Decimal("5"), "fon", "Ben", 1)
+    extra = Position(6, "Assets:Fund:ABC", "asset", "TEFAS.ABC", Decimal("5"), "fund", "Me", 1)
     valued = value_positions(positions() + [extra], book, at, max_age_days=7)
     nw = net_worth(valued, book, at)
-    assert nw.missing == ("Varlık:Fon:ABC (TEFAS.ABC)",)
+    assert nw.missing == ("Assets:Fund:ABC (TEFAS.ABC)",)
     assert not nw.complete
     assert len(nw.stale) == 2  # USD and gold prices are two months old
     assert nw.net.try_ == Decimal("39700")  # the fund is left out, not guessed

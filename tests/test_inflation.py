@@ -1,4 +1,4 @@
-"""CPI chaining, rebasing, splicing and the deflator, checked on TÜİK's real series."""
+"""CPI chaining, rebasing, splicing and the deflator, checked on the real Turkish series."""
 
 import csv
 import math
@@ -7,8 +7,8 @@ from importlib import resources
 
 import pytest
 
-from hane_finans.core.dates import add_months, parse_month
-from hane_finans.core.inflation import (
+from financeproject.core.dates import add_months, parse_month
+from financeproject.core.inflation import (
     Deflator,
     annual_pct,
     chain_index,
@@ -20,10 +20,10 @@ from hane_finans.core.inflation import (
 
 
 def bundled_table():
-    text = resources.files("hane_finans.data").joinpath("tufe_tcmb_aylik.csv").read_text(encoding="utf-8")
+    text = resources.files("financeproject.data").joinpath("cpi_tcmb_monthly.csv").read_text(encoding="utf-8")
     rows = list(csv.DictReader(text.splitlines()))
-    monthly = {parse_month(r["ay"]): float(r["aylik_degisim"]) for r in rows}
-    annual = {parse_month(r["ay"]): float(r["yillik_degisim"]) for r in rows}
+    monthly = {parse_month(r["month"]): float(r["monthly_change_pct"]) for r in rows}
+    annual = {parse_month(r["month"]): float(r["annual_change_pct"]) for r in rows}
     return monthly, annual
 
 
@@ -43,7 +43,7 @@ def test_chain_index_small_example():
 
 
 def test_chain_index_rejects_gaps():
-    with pytest.raises(ValueError, match="boşluk"):
+    with pytest.raises(ValueError, match="Gap"):
         chain_index({date(2026, 1, 1): 1.0, date(2026, 3, 1): 1.0}, base_year=None)
 
 
@@ -82,7 +82,7 @@ def test_splice_rescales_older_base_and_prefers_newer():
 
 def test_deflator_monthly_method():
     sep, oct_ = date(2026, 9, 1), date(2026, 10, 1)
-    d = Deflator({sep: 100.0, oct_: 110.0}, method="aylik")
+    d = Deflator({sep: 100.0, oct_: 110.0}, method="monthly")
     assert d.level(date(2026, 9, 30)) == 100.0
     assert d.factor(date(2026, 9, 5)) == pytest.approx(1.1)  # to October prices
     assert d.factor(date(2026, 10, 20)) == pytest.approx(1.0)
@@ -109,7 +109,7 @@ def test_deflator_rejects_bad_input():
     with pytest.raises(ValueError):
         Deflator({})
     with pytest.raises(ValueError):
-        Deflator({date(2026, 1, 1): 100.0}, method="baska")
+        Deflator({date(2026, 1, 1): 100.0}, method="other")
     with pytest.raises(ValueError):
         Deflator({date(2026, 1, 1): 100.0, date(2026, 3, 1): 101.0})
     d = Deflator({date(2026, 1, 1): 100.0})

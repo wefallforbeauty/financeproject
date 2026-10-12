@@ -7,21 +7,20 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from hane_finans import config
-from hane_finans.cli import app
-from hane_finans.prices import http as http_module
+from financeproject import config
+from financeproject.cli import app
+from financeproject.prices import http as http_module
 
 runner = CliRunner(env={"COLUMNS": "200"})  # wide enough that tables do not wrap
 
 
 @pytest.fixture
 def db(tmp_path):
-    return str(tmp_path / "defter.sqlite")
+    return str(tmp_path / "ledger.sqlite")
 
 
 def run(db, *args):
-    result = runner.invoke(app, ["-d", db, *args])
-    return result
+    return runner.invoke(app, ["-d", db, *args])
 
 
 def ok(db, *args):
@@ -31,99 +30,114 @@ def ok(db, *args):
 
 
 def test_full_flow(db, tmp_path):
-    assert "oluşturuldu" in ok(db, "baslat")
-    assert "zaten vardı" in ok(db, "baslat")
-    ok(db, "hesap", "ekle", "Varlık:Banka:Vadesiz", "--tur", "vadesiz", "--sahip", "Ben", "--kurum", "Banka A")
-    ok(db, "hesap", "ekle", "Varlık:Döviz:USD Hesabı", "--tur", "doviz", "--birim", "USD")
-    ok(db, "hesap", "ekle", "Borç:Kredi Kartı:Bonus", "--tur", "kredi_karti")
-    ok(db, "hesap", "ekle", "Gider:Gıda:Market")
-    ok(db, "hesap", "ekle", "Gelir:Maaş")
-    ok(db, "acilis", "Vadesiz", "100.000,00", "--tarih", "2026-10-01")
-    ok(db, "acilis", "Bonus", "2500", "--tarih", "2026-10-01")
-    ok(db, "gelir", "65000", "Maaş", "--hedef", "Vadesiz", "--tarih", "2026-10-02")
-    ok(db, "harcama", "450,5", "market", "--kaynak", "bonus", "--tarih", "2026-10-03")
-    ok(db, "transfer", "2950,50", "--kaynak", "Vadesiz", "--hedef", "Bonus", "--tarih", "2026-10-04")
-    out = ok(db, "degisim", "--kaynak", "Vadesiz", "--verilen", "49126,70", "--hedef", "USD Hesabı", "--alinan", "1000", "--tarih", "2026-10-08")
-    assert "Kur: 1 USD = 49,126700 TRY" in out
-    ok(db, "islem", "ekle", "--aciklama", "Elle", "-s", "Market=10", "-s", "Vadesiz", "--tarih", "2026-10-08")
-    ok(db, "fiyat", "ekle", "USD", "49,1267", "--tarih", "2026-10-08")
-    ok(db, "fiyat", "ekle", "XAU_G", "130", "--tarih", "2026-10-08", "--para", "USD")
+    assert "created" in ok(db, "init")
+    assert "already existed" in ok(db, "init")
+    ok(db, "account", "add", "Assets:Bank:Checking", "--kind", "checking", "--owner", "Me", "--institution", "Bank A")
+    ok(db, "account", "add", "Assets:FX:USD Account", "--kind", "fx", "--commodity", "USD")
+    ok(db, "account", "add", "Liabilities:Credit Card:Bonus", "--kind", "credit_card")
+    ok(db, "account", "add", "Expenses:Food:Groceries")
+    ok(db, "account", "add", "Income:Salary")
+    ok(db, "opening", "Checking", "100,000.00", "--date", "2026-10-01")
+    ok(db, "opening", "Bonus", "2500", "--date", "2026-10-01")
+    ok(db, "income", "65000", "Salary", "--to", "Checking", "--date", "2026-10-02")
+    ok(db, "expense", "450.5", "groceries", "--from", "bonus", "--date", "2026-10-03")
+    ok(db, "transfer", "2950.50", "--from", "Checking", "--to", "Bonus", "--date", "2026-10-04")
+    out = ok(db, "exchange", "--from", "Checking", "--paid", "49126.70", "--to", "USD Account", "--received", "1000", "--date", "2026-10-08")
+    assert "Rate: 1 USD = 49.126700 TRY" in out
+    ok(db, "txn", "add", "--description", "By hand", "-p", "Groceries=10", "-p", "Checking", "--date", "2026-10-08")
+    ok(db, "price", "add", "USD", "49.1267", "--date", "2026-10-08")
+    ok(db, "price", "add", "XAU_G", "130", "--date", "2026-10-08", "--quote", "USD")
 
-    out = ok(db, "bilanco", "--tarih", "2026-10-08")
-    assert "Net servet" in out and "Reel TL" in out and "USD" in out and "Gram altın" in out
-    # 100 000 + 65 000 − 2 950,50 − 49 126,70 − 10 = 112 912,80 TL plus 1 000 USD × 49,1267
-    assert "162.039,50" in out
+    out = ok(db, "balance-sheet", "--date", "2026-10-08")
+    assert "Net worth" in out and "Real TRY" in out and "USD" in out and "Grams of gold" in out
+    # 100,000 + 65,000 − 2,950.50 − 49,126.70 − 10 = 112,912.80 TRY plus 1,000 USD × 49.1267
+    assert "162,039.50" in out
 
-    out = ok(db, "durum")
-    assert "tamam" in out
-    assert "Vadesiz" in ok(db, "hesap", "liste", "--tarih", "2026-10-08")
-    assert "Elle" in ok(db, "islem", "liste")
-    assert "Eylül 2026" in ok(db, "tufe", "--son", "3")
-    out = ok(db, "servet", "--baslangic", "2026-10-01", "--bitis", "2026-10-08", "--siklik", "gun", "--csv", str(tmp_path / "s.csv"))
-    assert (tmp_path / "s.csv").exists()
-    ok(db, "grafik", "--bitis", "2026-10-08", "--dosya", str(tmp_path / "g.png"))
-    assert (tmp_path / "g.png").exists()
-    assert "Yedek" in ok(db, "yedekle", "--hedef", str(tmp_path / "yedek"))
+    assert "ok" in ok(db, "status")
+    # Account paths are printed as they are: ":Bank:" must not become an emoji
+    assert "Assets:Bank:Checking" in ok(db, "account", "list", "--date", "2026-10-08")
+    assert "Assets:Bank:Checking" in ok(db, "account", "add", "--help")
+    assert "By hand" in ok(db, "txn", "list")
+    assert "September 2026" in ok(db, "cpi", "--last", "3")
+    ok(db, "networth", "--start", "2026-10-01", "--end", "2026-10-08", "--frequency", "day", "--csv", str(tmp_path / "n.csv"))
+    assert (tmp_path / "n.csv").exists()
+    ok(db, "chart", "--end", "2026-10-08", "--file", str(tmp_path / "c.png"))
+    assert (tmp_path / "c.png").exists()
+    assert "Backup" in ok(db, "backup", "--target", str(tmp_path / "backups"))
+
+
+def test_number_format_setting(db):
+    ok(db, "init")
+    ok(db, "account", "add", "Assets:Bank:Checking", "--kind", "checking")
+    ok(db, "opening", "Checking", "1234567.5", "--date", "2026-10-01")
+    assert "1,234,567.50" in ok(db, "account", "list", "--date", "2026-10-01")
+    assert "1.234.567,89" in ok(db, "config", "number-format", "1.234,56")
+    assert "1.234.567,50" in ok(db, "account", "list", "--date", "2026-10-01")
+    assert "1.234,56" in ok(db, "config", "show")
+    result = run(db, "config", "number-format", "1 234,56")
+    assert result.exit_code == 1
 
 
 def test_errors_are_short_messages(db):
-    result = run(db, "bilanco")
-    assert result.exit_code == 1 and "finans baslat" in result.output
-    ok(db, "baslat")
-    result = run(db, "harcama", "10", "Yok", "--kaynak", "Vadesiz")
-    assert result.exit_code == 1 and "Hesap bulunamadı" in result.output
-    result = run(db, "hesap", "ekle", "Banka:X")
-    assert result.exit_code == 1 and "biriyle başlamalı" in result.output
-    result = run(db, "islem", "ekle", "--aciklama", "x", "-s", "Gider:Kategorisiz=5", "-s", "Gelir:Kategorisiz=4")
-    assert result.exit_code == 1 and "dengede değil" in result.output
+    result = run(db, "balance-sheet")
+    assert result.exit_code == 1 and "finance init" in result.output
+    ok(db, "init")
+    result = run(db, "expense", "10", "Nothing", "--from", "Checking")
+    assert result.exit_code == 1 and "No account matches" in result.output
+    result = run(db, "account", "add", "Bank:X")
+    assert result.exit_code == 1 and "start with one of" in result.output
+    result = run(db, "txn", "add", "--description", "x", "-p", "Expenses:Uncategorized=5", "-p", "Income:Uncategorized=4")
+    assert result.exit_code == 1 and "does not balance" in result.output
+    result = run(db, "networth", "--frequency", "year")
+    assert result.exit_code == 1 and "--frequency" in result.output
 
 
 def test_import_preview_and_rules(db, tmp_path):
-    ok(db, "baslat")
-    ok(db, "hesap", "ekle", "Borç:Kredi Kartı:Bonus", "--tur", "kredi_karti")
-    ok(db, "hesap", "ekle", "Gider:Gıda:Market")
-    path = tmp_path / "e.csv"
-    path.write_text("tarih;aciklama;tutar\n2026-10-01;MİGROS;-450,00\n2026-10-02;BİM;-80\n", encoding="utf-8")
-    out = ok(db, "iceaktar", str(path), "--hesap", "Bonus", "--deneme")
-    assert "Deneme" in out and "2 yeni" in out
-    out = ok(db, "iceaktar", str(path), "--hesap", "Bonus")
-    assert "2 işlem eklendi" in out and "2 kategorisiz" in out
-    out = ok(db, "iceaktar", str(path), "--hesap", "Bonus")
-    assert "0 işlem eklendi" in out and "2 satır zaten vardı" in out
-    ok(db, "kural", "ekle", "migros", "Market")
-    assert "migros" in ok(db, "kural", "liste")
-    assert "1 işlem kategorilendi" in ok(db, "kural", "uygula")
+    ok(db, "init")
+    ok(db, "account", "add", "Liabilities:Credit Card:Bonus", "--kind", "credit_card")
+    ok(db, "account", "add", "Expenses:Food:Groceries")
+    path = tmp_path / "s.csv"
+    path.write_text("date;description;amount\n2026-10-01;MİGROS;-450,00\n2026-10-02;BİM;-80\n", encoding="utf-8")
+    out = ok(db, "import", str(path), "--account", "Bonus", "--dry-run")
+    assert "Dry run" in out and "2 new" in out
+    out = ok(db, "import", str(path), "--account", "Bonus")
+    assert "2 transactions added" in out and "2 uncategorized" in out
+    out = ok(db, "import", str(path), "--account", "Bonus")
+    assert "0 transactions added" in out and "2 rows were already in" in out
+    ok(db, "rule", "add", "migros", "Groceries")
+    assert "migros" in ok(db, "rule", "list")
+    assert "1 transactions categorized" in ok(db, "rule", "apply")
 
 
 def test_price_update_with_mocked_sources(db, monkeypatch):
-    text = resources.files("hane_finans.data").joinpath("tufe_tcmb_aylik.csv").read_text(encoding="utf-8")
+    text = resources.files("financeproject.data").joinpath("cpi_tcmb_monthly.csv").read_text(encoding="utf-8")
     rows = list(csv.DictReader(text.splitlines()))
     page = "<table>" + "".join(
-        f"<tr><td>{r['ay'][5:]}-{r['ay'][:4]}</td><td>{r['yillik_degisim']}</td><td>{r['aylik_degisim']}</td></tr>" for r in rows
+        f"<tr><td>{r['month'][5:]}-{r['month'][:4]}</td><td>{r['annual_change_pct']}</td><td>{r['monthly_change_pct']}</td></tr>"
+        for r in rows
     ) + "</table>"
     real_make_client = http_module.make_client
     monkeypatch.setattr(
         http_module, "make_client", lambda: real_make_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=page)))
     )
-    ok(db, "baslat")
-    out = ok(db, "fiyat", "guncelle", "--sadece", "tufe")
-    assert "TCMB tablosu" in out
+    ok(db, "init")
+    out = ok(db, "price", "update", "--only", "cpi")
+    assert "TCMB table" in out
 
 
 def test_demo_goes_to_a_separate_ledger(tmp_path, monkeypatch):
-    out = runner.invoke(app, ["ornek", "--sentetik", "--baslangic", "2026-01-01", "--bitis", "2026-03-31"])
+    out = runner.invoke(app, ["demo", "--synthetic", "--start", "2026-01-01", "--end", "2026-03-31"])
     assert out.exit_code == 0, out.output
-    demo_path = config.data_dir() / "ornek.sqlite"
-    assert demo_path.exists()
+    assert config.demo_db_path().exists()
     assert not config.default_db_path().exists()  # the real ledger was not created
-    again = runner.invoke(app, ["ornek", "--sentetik"])
-    assert again.exit_code == 1 and "--uzerine-yaz" in again.output
-    real = runner.invoke(app, ["-d", str(config.default_db_path()), "ornek", "--sentetik"])
-    assert real.exit_code == 1 and "gerçek deftere" in real.output
+    again = runner.invoke(app, ["demo", "--synthetic"])
+    assert again.exit_code == 1 and "--overwrite" in again.output
+    real = runner.invoke(app, ["-d", str(config.default_db_path()), "demo", "--synthetic"])
+    assert real.exit_code == 1 and "real ledger" in real.output
 
 
 def test_settings_key_file_is_private(tmp_path):
-    result = runner.invoke(app, ["ayar", "evds-anahtari", "abc123"])
+    result = runner.invoke(app, ["config", "evds-key", "abc123"])
     assert result.exit_code == 0, result.output
     path = config.settings_path()
     assert path.stat().st_mode & 0o777 == 0o600
@@ -131,15 +145,15 @@ def test_settings_key_file_is_private(tmp_path):
 
 
 def test_bank_text_with_brackets_is_not_markup(db, tmp_path):
-    ok(db, "baslat")
-    ok(db, "hesap", "ekle", "Varlık:Banka:Vadesiz", "--tur", "vadesiz")
-    ok(db, "harcama", "5", "Gider:Kategorisiz", "--kaynak", "Vadesiz", "--aciklama", "[POS] MIGROS [/x] [bold]")
-    assert "[POS] MIGROS [/x] [bold]" in ok(db, "islem", "liste")
+    ok(db, "init")
+    ok(db, "account", "add", "Assets:Bank:Checking", "--kind", "checking")
+    ok(db, "expense", "5", "Expenses:Uncategorized", "--from", "Checking", "--description", "[POS] MIGROS [/x] [bold]")
+    assert "[POS] MIGROS [/x] [bold]" in ok(db, "txn", "list")
 
 
 def test_broken_settings_file_is_a_clear_error(db):
     path = config.settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[evds\napi_key = ", encoding="utf-8")
-    result = run(db, "ayar", "goster")
-    assert result.exit_code == 1 and "Ayar dosyası okunamadı" in result.output
+    result = run(db, "config", "show")
+    assert result.exit_code == 1 and "Cannot read the settings file" in result.output

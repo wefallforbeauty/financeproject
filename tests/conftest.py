@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from hane_finans.core.prices import PriceBook, Quote
-from hane_finans.ledger.db import init_db, make_engine, session_scope
+from financeproject.core.money import DEFAULT_NUMBER_FORMAT, set_number_format
+from financeproject.core.prices import PriceBook, Quote
+from financeproject.ledger.db import init_db, make_engine, session_scope
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -15,11 +16,12 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @pytest.fixture(autouse=True)
 def isolated_dirs(tmp_path, monkeypatch):
     """Never touch the real ledger or settings: point every path at tmp_path."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
-    monkeypatch.delenv("HANE_FINANS_DIZIN", raising=False)
-    monkeypatch.delenv("HANE_FINANS_VT", raising=False)
+    monkeypatch.setenv("FINANCEPROJECT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("FINANCEPROJECT_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("FINANCEPROJECT_DB", raising=False)
     monkeypatch.delenv("EVDS_API_KEY", raising=False)
+    yield
+    set_number_format(DEFAULT_NUMBER_FORMAT)
 
 
 @pytest.fixture
@@ -42,7 +44,7 @@ def fixtures() -> Path:
 
 
 def simple_book() -> PriceBook:
-    """USD/TRY 40 and gold 100 USD/g (4 000 TL/g) from 2026-01-01, then 44 and 110 from 2026-06-01."""
+    """USD/TRY 40 and gold 100 USD/g (4,000 TRY/g) from 2026-01-01, then 44 and 110 from 2026-06-01."""
     return PriceBook(
         [
             Quote("USD", "TRY", date(2026, 1, 1), Decimal("40"), "test"),

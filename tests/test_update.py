@@ -9,11 +9,11 @@ import httpx
 import pytest
 from conftest import EVDS_DAILY
 
-from hane_finans.ledger.accounts import create_account
-from hane_finans.ledger.db import make_engine
-from hane_finans.prices import update
-from hane_finans.prices.http import make_client
-from hane_finans.prices.store import (
+from financeproject.ledger.accounts import create_account
+from financeproject.ledger.db import make_engine
+from financeproject.prices import update
+from financeproject.prices.http import make_client
+from financeproject.prices.store import (
     KEPT,
     MANUAL,
     index_sources,
@@ -27,10 +27,10 @@ from hane_finans.prices.store import (
 
 def tcmb_page_from_bundled_csv() -> str:
     """A TCMB-style CPI page built from the full bundled table."""
-    text = resources.files("hane_finans.data").joinpath("tufe_tcmb_aylik.csv").read_text(encoding="utf-8")
+    text = resources.files("financeproject.data").joinpath("cpi_tcmb_monthly.csv").read_text(encoding="utf-8")
     rows = list(csv.DictReader(text.splitlines()))
     cells = "".join(
-        f"<tr><td>{r['ay'][5:]}-{r['ay'][:4]}</td><td>{r['yillik_degisim']}</td><td>{r['aylik_degisim']}</td></tr>"
+        f"<tr><td>{r['month'][5:]}-{r['month'][:4]}</td><td>{r['annual_change_pct']}</td><td>{r['monthly_change_pct']}</td></tr>"
         for r in reversed(rows)
     )
     return f"<table><thead><tr><th>Ay-Yıl</th><th>Yıllık</th><th>Aylık</th></tr></thead><tbody>{cells}</tbody></table>"
@@ -68,11 +68,11 @@ def test_update_fx_from_tcmb_fetches_only_missing_days(session, fixtures):
 
 def test_update_fx_uses_evds_with_a_key(session):
     def handler(request):
-        assert request.headers["key"] == "anahtar"
+        assert request.headers["key"] == "the-key"
         return httpx.Response(200, json=EVDS_DAILY)
 
     with make_client(transport=httpx.MockTransport(handler)) as client:
-        report = update.update_fx(session, client, date(2026, 9, 1), date(2026, 10, 9), ["USD", "EUR"], api_key="anahtar")
+        report = update.update_fx(session, client, date(2026, 9, 1), date(2026, 10, 9), ["USD", "EUR"], api_key="the-key")
     assert report.added == 4
     assert "EVDS" in report.messages[0]
     book = load_pricebook(session)
@@ -118,26 +118,26 @@ def test_cpi_sources_and_priority(session):
     index = load_index(session)
     assert len(index) == 261 and report.added == 261
     assert sum(v for m, v in index.items() if m.year == 2025) / 12 == pytest.approx(100.0)
-    assert index_sources(session) == {"paket": 261}
+    assert index_sources(session) == {"bundled": 261}
 
     page = tcmb_page_from_bundled_csv()
     with make_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=page))) as client:
         update.update_cpi(session, client)
-    assert index_sources(session) == {"tcmb-tablo": 261}
+    assert index_sources(session) == {"tcmb-table": 261}
 
     evds_answer = {"items": [{"Tarih": "2026-9", "TP_TUKFIY2025_GENEL": "137.21000000"}]}
     with make_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=evds_answer))) as client:
         update.update_cpi(session, client, api_key="k", today=date(2026, 10, 9))
     assert load_index(session)[date(2026, 9, 1)] == pytest.approx(137.21)
-    assert index_sources(session) == {"tcmb-tablo": 260, "evds": 1}
+    assert index_sources(session) == {"tcmb-table": 260, "evds": 1}
     # A lower-priority source never overwrites EVDS
-    assert upsert_index(session, "TUFE", date(2026, 9, 1), Decimal("1"), "paket") == KEPT
+    assert upsert_index(session, "CPI", date(2026, 9, 1), Decimal("1"), "bundled") == KEPT
 
 
 def test_cpi_table_with_a_gap_is_an_error(session, fixtures):
-    page = (fixtures / "tcmb_tufe_ornek.html").read_text(encoding="utf-8")  # 17 rows, not consecutive
+    page = (fixtures / "tcmb_cpi_sample.html").read_text(encoding="utf-8")  # 17 rows, not consecutive
     with make_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=page))) as client:
-        with pytest.raises(update.SourceError, match="zincirlenemedi"):
+        with pytest.raises(update.SourceError, match="Cannot chain"):
             update.update_cpi(session, client)
 
 
@@ -149,12 +149,12 @@ def test_manual_price_is_never_overwritten(session):
 
 def test_tcmb_currencies(session):
     assert update.tcmb_currencies(session) == ["USD"]
-    create_account(session, "Varlık:Döviz:Euro", kind="doviz", commodity="EUR")
+    create_account(session, "Assets:FX:Euro", kind="fx", commodity="EUR")
     assert update.tcmb_currencies(session) == ["EUR", "USD"]
 
 
 def test_make_engine_creates_parent_dirs(tmp_path):
-    path = tmp_path / "a" / "b" / "defter.sqlite"
+    path = tmp_path / "a" / "b" / "ledger.sqlite"
     eng = make_engine(path)
     with eng.connect():
         pass
