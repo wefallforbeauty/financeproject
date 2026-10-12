@@ -14,9 +14,9 @@ import httpx
 import pytest
 from conftest import EVDS_DAILY, EVDS_MONTHLY
 
-from hane_finans.errors import EvdsKeyError, SourceError
-from hane_finans.prices import evds, frankfurter, tcmb, tcmb_cpi
-from hane_finans.prices.http import make_client
+from financeproject.errors import EvdsKeyError, SourceError
+from financeproject.prices import evds, frankfurter, tcmb, tcmb_cpi
+from financeproject.prices.http import make_client
 
 
 def client_for(handler):
@@ -62,7 +62,7 @@ def test_fetch_tcmb_bulletin_urls_and_status(fixtures):
         assert tcmb.fetch_bulletin(client, date(2026, 10, 1)).price("USD") == Decimal("48.9466")
         assert tcmb.fetch_bulletin(client, date(2026, 10, 4)) is None
         assert tcmb.fetch_bulletin(client).date == date(2026, 10, 8)
-        with pytest.raises(SourceError, match="tarihli bülten"):
+        with pytest.raises(SourceError, match="returned the bulletin of"):
             tcmb.fetch_bulletin(client, date(2026, 10, 2))
         with pytest.raises(SourceError, match="500"):
             tcmb.fetch_bulletin(client, date(2026, 10, 3))
@@ -121,25 +121,25 @@ def test_evds_parse_series():
 
 def test_evds_sends_key_in_header_and_reports_rejection():
     def handler(request):
-        if request.headers.get("key") != "gizli":
+        if request.headers.get("key") != "secret":
             return httpx.Response(403, json={"status": "403", "message": "Required request header 'key' is not present"})
         assert "key=" not in str(request.url)  # never in the URL
         return httpx.Response(200, json=EVDS_DAILY)
 
     with client_for(handler) as client:
-        out = evds.fetch_series(client, "gizli", ["TP.DK.USD.A.YTL"], date(2026, 10, 1), date(2026, 10, 8))
+        out = evds.fetch_series(client, "secret", ["TP.DK.USD.A.YTL"], date(2026, 10, 1), date(2026, 10, 8))
         assert len(out["TP.DK.USD.A.YTL"]) == 2
         with pytest.raises(EvdsKeyError):
-            evds.fetch_series(client, "yanlis", ["TP.DK.USD.A.YTL"], date(2026, 10, 1), date(2026, 10, 8))
+            evds.fetch_series(client, "wrong", ["TP.DK.USD.A.YTL"], date(2026, 10, 1), date(2026, 10, 8))
         with pytest.raises(EvdsKeyError):
             evds.fetch_series(client, "", ["TP.DK.USD.A.YTL"], date(2026, 10, 1), date(2026, 10, 8))
 
 
 def test_tcmb_cpi_table(fixtures):
-    rows = tcmb_cpi.parse_cpi_table((fixtures / "tcmb_tufe_ornek.html").read_text(encoding="utf-8"))
+    rows = tcmb_cpi.parse_cpi_table((fixtures / "tcmb_cpi_sample.html").read_text(encoding="utf-8"))
     assert len(rows) == 17
     assert rows[0] == tcmb_cpi.CpiChange(date(2005, 1, 1), Decimal("9.24"), Decimal("0.55"))
     assert rows[-1] == tcmb_cpi.CpiChange(date(2026, 9, 1), Decimal("29.73"), Decimal("1.84"))
     assert [r.month for r in rows] == sorted(r.month for r in rows)
-    with pytest.raises(SourceError, match="bulunamadı"):
+    with pytest.raises(SourceError, match="No CPI table"):
         tcmb_cpi.parse_cpi_table("<html><table><tr><td>a</td></tr></table></html>")

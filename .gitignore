@@ -3,20 +3,21 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .hypothesis/
+.ruff_cache/
 *.egg-info/
 build/
 dist/
 
-# Kişisel veri asla depoya girmez. Defter varsayılan olarak depo dışında
-# (~/.local/share/hane-finans/) tutulur; bunlar yanlışlıkla buraya
-# kopyalanırsa diye ikinci bir güvenlik ağıdır.
+# Personal data never goes into the repository. The ledger lives outside it,
+# in the user data directory (see financeproject/config.py); these patterns are
+# a second safety net in case such files are copied here by mistake.
 *.sqlite
 *.sqlite3
 *.db
 *.db-journal
 *.db-wal
-kisisel/
-yedek/
-cikti/
+private/
+backups/
+output/
 .env
-ayarlar.toml
+settings.toml

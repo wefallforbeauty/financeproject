@@ -1,8 +1,0 @@
-tarih;aciklama;tutar;hesap;karsi_hesap;birim;karsi_taraf;not
-2026-10-01;MİGROS KONYA;-450,00;Borç:Kredi Kartı:Bonus;;;Migros;
-2026-10-02;Ekim maaşı;65.000,00;Varlık:Banka:Vadesiz;Gelir:Maaş;;Şirket;
-2026-10-03;Kira;-25.000,00;Varlık:Banka:Vadesiz;Gider:Kira;;Ev sahibi;
-2026-10-05;Kredi kartı ödemesi;-450,00;Varlık:Banka:Vadesiz;Borç:Kredi Kartı:Bonus;;;
-2026-10-06;KAHVE DÜNYASI;-95,50;Borç:Kredi Kartı:Bonus;;;;
-2026-10-06;KAHVE DÜNYASI;-95,50;Borç:Kredi Kartı:Bonus;;;;aynı gün ikinci kahve
-2026-10-07;Elektrik faturası;-1.240,35;Varlık:Banka:Vadesiz;Gider:Fatura:Elektrik;;;
