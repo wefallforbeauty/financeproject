@@ -36,6 +36,12 @@ class StatementLine:
     """The bank's own number for the line (receipt or reference number)."""
     payee: str | None = None
     """Merchant or person, when the template can read it from the description."""
+    kind: str | None = None
+    """What the template recognized: card, transfer, fee, cash, bill or loan (``None``: nothing)."""
+    loan_reference: str | None = None
+    """For a loan installment: the bank's number for the loan."""
+    installment: int | None = None
+    """For a loan installment: its number."""
 
 
 @dataclass(frozen=True)

@@ -168,9 +168,9 @@ def test_statement_import(db, fixtures, tmp_path):
     out = ok(db, "import", xlsx, "--account", "Ziraat", "--opening", "--dry-run")
     assert "Ziraat Bankası statement" in out and "Dry run" in out and "would be the same" in out
     out = ok(db, "import", xlsx, "--account", "Ziraat", "--opening")
-    assert "10 transactions added" in out and "the ledger's is the same" in out and "12,500.00" in out
+    assert "16 transactions added" in out and "the ledger's is the same" in out and "12,500.00" in out
     out = ok(db, "import", html, "--account", "Ziraat")
-    assert "0 transactions added" in out and "10 were already in" in out
+    assert "0 transactions added" in out and "16 were already in" in out
     csv_path = tmp_path / "s.csv"
     csv_path.write_text("date,description,amount\n2026-10-01,X,-1\n", encoding="utf-8")
     result = run(db, "import", str(csv_path), "--account", "Ziraat", "--opening")

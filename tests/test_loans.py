@@ -1,4 +1,4 @@
-"""Loans: payment plans, the annual cost rate, payments in the ledger."""
+"""Loans: payment plans, the annual cost rate, payments in the ledger, statement lines."""
 
 from datetime import date
 from decimal import Decimal
@@ -23,6 +23,8 @@ from financeproject.core.loans import (
     year_fraction,
 )
 from financeproject.errors import LedgerError
+from financeproject.ingest.banks import read_statement
+from financeproject.ingest.importer import import_statement
 from financeproject.ledger.accounts import create_account, find_account
 from financeproject.ledger.loans import (
     add_loan,
@@ -300,3 +302,38 @@ def test_a_loan_on_an_account_with_history_starts_after_it(bank):
     with pytest.raises(LedgerError, match="already has transactions"):
         add_loan(s, "Van", "Van", principal=D(1000), monthly_rate=D(0), count=1, first_due=date(2026, 2, 1), disburse_to="Checking")
 
+
+# --------------------------------------------------------------------------- statements
+
+
+def test_statement_installment_lines_pay_the_loan(bank, fixtures):
+    s = bank
+    create_account(s, "Assets:Bank:Ziraat Checking", kind="checking")
+    loan = add_loan(
+        s, "Car", "Car", principal=CONSUMER.principal, monthly_rate=CONSUMER.monthly_rate, count=24,
+        first_due=CONSUMER.first_due, opening_on=date(2026, 9, 1), reference="12345678-0001",
+    )
+    path = fixtures / "ziraat_statement.xlsx"
+    preview = import_statement(s, read_statement(path), path, "Ziraat Checking", add_opening=True, dry_run=True)
+    row = next(r for r in preview.rows if r.how.startswith("loan"))
+    assert row.how == "loan Car #5" and row.counter_account == "Liabilities:Loans:Car" and not preview.unknown_loans
+    result = import_statement(s, read_statement(path), path, "Ziraat Checking", add_opening=True)
+    assert result.written and result.loan_payments == 1 and result.balance_check.ok
+    assert owed(s, loan, date(2026, 9, 30)) == plan(loan)[4].balance  # paid exactly as planned
+    payment = next(p for p in loan.payments if p.number == 5)
+    assert payment.transaction.payee == "Loan 12345678-0001" and payment.transaction.import_key
+    html = fixtures / "ziraat_statement.html"
+    again = import_statement(s, read_statement(html), html, "Ziraat Checking")
+    assert again.added == 0 and again.duplicates == 16
+
+
+def test_installment_lines_before_the_loan_starts_are_refused(bank, fixtures):
+    s = bank
+    create_account(s, "Assets:Bank:Ziraat Checking", kind="checking")
+    add_loan(
+        s, "Car", "Car", principal=CONSUMER.principal, monthly_rate=CONSUMER.monthly_rate, count=24,
+        first_due=CONSUMER.first_due, opening_on=date(2026, 9, 20), reference="12345678-0001",
+    )
+    path = fixtures / "ziraat_statement.xlsx"
+    result = import_statement(s, read_statement(path), path, "Ziraat Checking", add_opening=True)
+    assert not result.written and "counts as paid before the ledger began" in result.errors[0]
