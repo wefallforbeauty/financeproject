@@ -90,8 +90,8 @@ the program stops with a clear error.
 ### Ziraat Bankası account statements
 
 Internet banking offers the account movements ("Hesap Hareketleri") of a
-period as Excel (.xlsx) or HTML. Both hold the same table; the template was
-written after a real export of October 2026 and is tested on made-up
+period as Excel (.xlsx) or HTML. Both hold the same table. The template
+follows the layout of the bank's downloads and is tested on made-up
 statements with the same layout (`tests/fixtures/make_ziraat_samples.py`).
 
 | | Excel (.xlsx) | HTML |
@@ -102,17 +102,27 @@ statements with the same layout (`tests/fixtures/make_ziraat_samples.py`).
 | Amounts | numbers (`-389.9`) | Turkish text (`-1.234,56`) |
 | Period | "`01.09.2026 - 30.09.2026` tarihleri arasındaki…" | `Dönem : 01.09.2026-30.09.2026` |
 | Currency | last word of the account number line (`TL`) | `Döviz Cinsi : TRY` |
-| Totals | `Borç:-20.775,45` and `Alacak:50.000` in one cell each | `Borç:` and `Alacak:` with the amount in the amount column |
+| Totals | `Borç:-30.413,68` and `Alacak:53.000` in one cell each | `Borç:` and `Alacak:` with the amount in the amount column |
 | Other | logo, account holder, IBAN, legal footer | account holder, branch, address, IBAN; a bot-protection script before the page |
 
 - **Receipt number (Fiş No):** the bank's number for each line. It makes the
   import key independent of the description, so the Excel and HTML downloads
   of the same period give the same keys.
-- **Descriptions:** card purchases read
-  `POS ALIŞVERİŞ KART NO: 4000 **** **** 0000 İŞYERİ: <merchant> MUTABAKAT: <number>`
-  (online: `SANAL POS ALIŞVERİŞ …`), mobile transfers
-  `<name> Ziraat Mobil Havale`. The merchant and the name become the payee.
-  Other kinds of lines are imported with their description as it is.
+- **Descriptions** tell the kind of most lines (the made-up statements in
+  the tests have one of each):
+
+  | Kind | Description | Payee |
+  |---|---|---|
+  | card | `POS ALIŞVERİŞ KART NO: … İŞYERİ: <merchant> MUTABAKAT: <number>` (online: `SANAL POS ALIŞVERİŞ …`) | the merchant |
+  | transfer | `<name> Ziraat Mobil Havale`; lines with the word `FAST` | the name (mobile transfers) |
+  | fee | `MESAJ ÜCRETİ TUTARI`, `KOMİSYON TUTARI`, and `BSMV TUTARI` for the tax on them | Ziraat Bankası |
+  | cash | starts with `ATM` | ATM |
+  | bill | `<company>/ Abone no: … / Fatura no: …` | the company |
+  | loan | `<loan number> hesap <n>. taksit ödeme tutarı` | Loan \<number\> |
+
+  Other lines are imported with their description as it is. A loan line whose
+  number belongs to a loan defined in the ledger is split into principal,
+  interest and taxes (METHOD §17).
 - **The Excel file** is written by a generator that leaves out the cell
   references and puts an empty `<fill/>` into the style sheet. openpyxl refuses
   the file; python-calamine (a reader written in Rust, also used by pandas)

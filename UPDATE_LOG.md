@@ -1,5 +1,85 @@
 # Update log
 
+## 02 (2026-10-14)
+
+Pull request #4. Version 02 is the debt module: loans with their payment
+plans and annual cost rate, payments split into principal, interest and taxes
+(also from bank statement lines), cash or installments, plans for paying off
+several debts and the real burden of debt.
+
+### Loans
+
+- **Loans** (`core/loans.py`, `ledger/loans.py`): a liability account plus its
+  terms: principal, the contractual monthly rate, the number of installments,
+  the first due date, the method (equal installments or equal principal),
+  KKDF and BSMV, fees, and the bank's number for the loan. New tables `loans`
+  and `loan_payments`.
+- **Payment plans** as banks print them: the annuity at the rate with KKDF and
+  BSMV, interest on the balance each month, every part rounded to the kuruş,
+  the last installment taking what is left. They reproduce the worked example
+  of İş Bankası's note on the annual cost rate (888.49 a month, the last
+  888.47). KKDF and BSMV default to 15 % each on consumer and vehicle loans
+  and 0 on others; each loan keeps its own rates.
+- **The annual cost rate** (yıllık maliyet oranı) by the formula of the EU
+  consumer credit directive and the Turkish consumer credit regulation, with
+  time in whole months and days. The bank's example gives 13.7504 %; the
+  program 13.7506 %, less than a kuruş of present value apart.
+- **The rate from an installment:** when the papers show the installment and
+  not the rate, it is worked out from the installment.
+- **Payments:** the planned split when the installment is paid as planned;
+  otherwise interest and taxes first, one month's worth on the balance, the
+  rest principal. Installments collected in parts share one month's interest;
+  early repayments lower the principal only; whatever is paid beyond what is
+  owed counts as interest. After a payment off the plan, the installments left
+  are worked out from the ledger's balance.
+- **Loans from before the ledger:** with `--opening-on` the installments due
+  by that day count as paid and the account opens at the plan's balance.
+- Commands: `finance loan add`, `loan list`, `loan schedule` (`--csv`),
+  `loan pay` (`--extra` for an early repayment), `loan delete`.
+
+### Bank statements
+
+- The Ziraat Bankası template tells the kind of each line it can: card
+  purchases, transfers (mobile and FAST), the bank's fees and the tax on them,
+  cash withdrawals, bill payments (the company becomes the payee) and loan
+  installments (the loan's number and the installment's number).
+- An installment line of a loan defined with `--reference` is booked as that
+  loan's payment, split into principal, interest and taxes. Loan numbers no
+  defined loan has are listed after the import with the command to add the
+  loan. Installment lines dated before the loan's start in the ledger are
+  refused.
+- The made-up statements in the tests have one line of each kind.
+
+### Debt decisions
+
+- `finance apr`: the annual cost rate of any offer, from its installments or
+  its rate, with fees.
+- `finance cash-or-installments`: the installments in today's money at what
+  the money would earn (`--rate`, `--annual-rate`) or, by default, at the
+  CPI's inflation of the last twelve months; and the rate the plan charges
+  over the cash price.
+- `finance payoff`: the defined loans and the debts named on the command line,
+  paid off highest rate first (avalanche) or smallest debt first (snowball),
+  against paying only the least amounts.
+- `finance debt`: every debt with its rates, its annual cost rate, its real
+  rate after inflation, the installments left and what they are worth in
+  today's money; for cards, the installments billed in later months.
+- `finance upcoming` lists loan installments too, overdue ones first.
+
+### Demo and documents
+
+- The demo household's consumer loan now has terms: it started five months
+  before the ledger, and every installment is split into principal, interest
+  and taxes. The household also pays back money borrowed from a friend.
+- METHOD.md §16–21: payment plans, payments in the ledger, the annual cost
+  rate, cash or installments, paying off several debts, the real burden of
+  debt; with the directive, the regulation, the bank's note and studies of how
+  people repay debts (Amar et al. 2011, Gal & McShane 2012, Brown & Lahey
+  2015).
+- DATA_SOURCES.md lists the kinds of statement lines the template
+  recognizes.
+- 186 tests (158 before).
+
 ## 01 (2026-10-12)
 
 Pull requests #2 and #3. The project got its new name and became English and

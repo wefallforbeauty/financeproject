@@ -1,4 +1,4 @@
-# Method (version 01)
+# Method (version 02)
 
 This document gives the definition, formula and source of everything the
 program computes. A section is added whenever a new model is.
@@ -227,10 +227,14 @@ bank reconciliation of bookkeeping, done for every statement.
 
 **Ziraat Bankası** (`banks/ziraat.py`). The table has the columns Tarih,
 Fiş No, Açıklama, İşlem Tutarı (Tutar in HTML) and Bakiye, newest line first,
-with the period, the currency and the debit/credit totals around it. Card
-purchases name the merchant between `İŞYERİ:` and `MUTABAKAT:`; mobile
-transfers start with the other person's name. Only the table, the period, the
-currency and the totals are read. Details: [DATA_SOURCES.md](DATA_SOURCES.md).
+with the period, the currency and the debit/credit totals around it. The
+description tells the kind of most lines: card purchases (the merchant between
+`İŞYERİ:` and `MUTABAKAT:` becomes the payee), transfers (a mobile transfer
+starts with the other person's name), the bank's fees, cash machine
+withdrawals, bill payments (the company before `Abone no`) and loan
+installments (the loan's number and the installment's number, §17). Only the
+table, the period, the currency and the totals are read. Details:
+[DATA_SOURCES.md](DATA_SOURCES.md).
 
 ## 9. Why net worth changed
 
@@ -432,24 +436,169 @@ Other (five and four for income). Colours follow the role of
 a flow (income, expense, savings), not the category, so the diagram needs no
 legend; every node is labeled with its amount and share of income.
 
+## 16. Loans: payment plans
+
+The contract states a monthly interest rate $r$. On consumer and vehicle loans
+the state also takes KKDF (Kaynak Kullanımı Destekleme Fonu, the Resource
+Utilization Support Fund) and BSMV (Banka ve Sigorta Muameleleri Vergisi, the
+Banking and Insurance Transactions Tax) as fractions $k$ and $b$ of every
+interest payment; loans for buying a home are exempt from both. The
+installment of an annuity loan uses the gross rate $g = r(1 + k + b)$:
+
+$$A = \left[ P \, \frac{g}{1 - (1+g)^{-n}} \right]_{0.01}$$
+
+Each month splits the installment, every part rounded to the kuruş:
+
+$$I_j = [B_{j-1}\, r], \qquad K_j = [I_j\, k], \qquad S_j = [I_j\, b], \qquad P_j = A - I_j - K_j - S_j, \qquad B_j = B_{j-1} - P_j$$
+
+and the last installment repays the principal that is left, $P_n = B_{n-1}$.
+With equal principal, $P_j = [P/n]$ and the installment falls month by month.
+This reproduces the payment plans banks print: the worked example of İş
+Bankası's note on the annual cost rate, 10,000 TRY at 1 % a month for 12
+months, gives 888.49 a month (the last 888.47) and 661.86 of interest; 100,000
+TRY at 3.49 % with 15 % KKDF and 15 % BSMV gives 6,924.20, of which the first
+month is 2,387.20 principal, 3,490.00 interest and 523.50 of each tax (the
+annuity formula itself: Kellison 2009, ch. 3 and 5).
+
+Rates are parameters of each loan, because they change by law: banks'
+pre-contract forms from before 2023 show BSMV on consumer loans at 5 %, newer
+ones at 15 %. The defaults are 15 % and 15 % for consumer and vehicle loans
+and 0 for other loans; the bank's pre-contract information form (sözleşme
+öncesi bilgi formu) has the loan's own figures. When the papers show the
+installment but not the rate, $g$ is the root of $P = A\,(1 - (1+g)^{-n})/g$
+(bisection) and $r = g/(1 + k + b)$.
+
+## 17. Loan payments in the ledger
+
+A loan is a liability account plus its terms (`ledger/loans.py`). A payment is
+one transaction: the paying account $-x$, the loan's account $+P$ (principal),
+and the interest and the taxes as expenses (one account, or two).
+
+- **As planned.** When the planned installment is paid while the ledger owes
+  exactly what the plan says, the plan's own split is used.
+- **Otherwise** interest and taxes are paid first and the rest repays
+  principal: one month's worth on what was owed when the installment's month
+  began. When a bank collects an installment in parts, the parts share that
+  month's interest: each pays what the earlier ones left of it.
+- **An early repayment** outside the installments lowers the principal only.
+- **More than is owed** (late interest, fees) is booked as interest; a
+  payment typed by hand is refused instead.
+- **After a payment off the plan** the installments left are worked out again
+  from the ledger's balance, with the same rate and number of installments
+  (the bank may shorten the term instead).
+- **A loan from before the ledger** (`--opening-on`): the installments due by
+  that day count as paid and the account opens at the plan's balance after
+  them, or at the balance given.
+
+On a Ziraat Bankası statement an installment line reads
+`<loan number> hesap <n>. taksit ödeme tutarı`. Once a loan has its number
+(`--reference`; spaces, dashes and case do not matter), such a line is booked
+as a payment of installment $n$ split as above. The import key stays the
+line's own, so importing the statement again adds nothing.
+
+## 18. The annual cost rate
+
+The annual cost rate (yıllık maliyet oranı) is the annual rate $X$ at which
+what the borrower receives and what they pay back are worth the same:
+
+$$\sum_k C_k\,(1+X)^{-t_k} = \sum_l D_l\,(1+X)^{-s_l}$$
+
+$C_k$ are the amounts paid out to the borrower, $D_l$ the installments, fees
+and other charges, and $t_k$, $s_l$ the times in years from the first flow.
+This is the APR of the EU consumer credit directive (2008/48/EC, Annex I),
+which the Turkish consumer credit regulation (Tüketici Kredisi Sözleşmeleri
+Yönetmeliği, 2015) takes over. Time is counted in whole months back from each
+flow's date, a month being 1/12 year, and the days left over are divided by
+the length of the year that ends on the last of them (365, or 366 when that
+year holds 29 February). The root is found by bisection.
+
+İş Bankası's note works through 10,000 TRY for 12 months at 1 % a month with a
+50 TRY file fee and finds 13.7504 % (13.75 %). The program finds 13.7506 %;
+the gap is less than one kuruş of present value, within the rounding of the
+note's own working, and the tests check the result. Without fees the annual
+cost rate is the gross monthly rate compounded, $(1+g)^{12} - 1$: 70.31 % for
+the 3.49 % loan above, against 54.4 % for $12g$ and 41.9 % for $12r$.
+`finance apr` computes it for any offer; `finance loan list` for every loan.
+
+## 19. Cash or installments
+
+Paying $C$ now or $n$ installments of $a$, the first in $m$ months: in today's
+money the installments are worth
+
+$$PV = \sum_{j=0}^{n-1} a\,(1+d)^{-(m+j)}$$
+
+at the monthly rate $d$ that the money earns while it stays in the account
+(a deposit rate after tax), or at the monthly rate of inflation, which compares
+the two in real terms. Without a rate the program takes the CPI's change over
+the last twelve months. The installments are cheaper when $PV < C$.
+Equivalently, the plan's own rate is the internal rate of return $i$ of the
+flows $+C, 0, \ldots, -a, \ldots, -a$ (what the installments charge over the
+cash price), and the installments are cheaper when $i < d$. Installments "at
+the cash price" charge nothing; at 30 % inflation a year, six of them starting
+next month are worth about 7 % less than paying cash.
+
+## 20. Paying off several debts
+
+Given a monthly budget $M$ at least the sum of the least payments, every month
+each debt grows by its rate (interest and taxes), each gets its least payment,
+and the rest of the budget goes to one debt at a time:
+
+- **avalanche:** the highest rate first. With a fixed budget, fixed least
+  payments and no fees, this order pays the least interest;
+- **snowball:** the smallest balance first. It pays more interest but clears a
+  first debt sooner.
+
+A debt paid off frees its least payment for the next one. The "as now" plan
+pays only the least payments. A loan's least payment is its next installment
+and its rate the gross monthly rate $g$; other debts take the rate and least
+payment given (default 0). Early repayment fees are not counted.
+
+Studies of how people repay debts find that many prefer to close small debts
+first even when it costs more ("debt account aversion", Amar et al. 2011), and
+that closing debts one by one helps people keep going (Gal & McShane 2012;
+Brown & Lahey 2015). The program shows both orders and the cost of the
+difference rather than choosing.
+
+## 21. The real burden of debt
+
+A debt in lira loses real value as prices rise. The installments left,
+discounted at the expected inflation $\pi$ a year, are worth
+
+$$PV = \sum_j A_j\,(1+\pi)^{-t_j}$$
+
+in today's money, with $t_j$ in years as in §18. A loan's real interest rate
+is $(1+g)^{12} / (1+\pi) - 1$ (Fisher, §5.5). $\pi$ defaults to the CPI's change
+over the last twelve months; `--inflation` sets another expectation. These are
+statements about purchasing power under that assumption, not forecasts: at
+30 % inflation the 3.49 % loan above still costs 31 % a year in real terms.
+`finance debt` lists every debt this way; a card's balance also shows how much
+of it is installments billed in later months (§11).
+
 ## References
 
+- Amar, M., Ariely, D., Ayal, S., Cryder, C. E., & Rick, S. I. (2011). Winning the battle but losing the war: The psychology of debt management. *Journal of Marketing Research*, 48(SPL), S38–S50.
+- Brown, A. L., & Lahey, J. N. (2015). Small victories: Creating intrinsic motivation in task completion and debt repayment. *Journal of Marketing Research*, 52(6), 768–783.
 - Campbell, J. Y. (2006). Household finance. *Journal of Finance*, 61(4), 1553–1604.
 - Dawid, A. P. (1984). Present position and potential developments: Some personal views. Statistical theory: The prequential approach. *Journal of the Royal Statistical Society, Series A*, 147(2), 278–292.
 - DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy? *Review of Financial Studies*, 22(5), 1915–1953.
 - DeVaney, S. A. (1994). The usefulness of financial ratios as predictors of household insolvency: Two perspectives. *Financial Counseling and Planning*, 5, 5–24.
 - DeVaney, S. A., & Lytton, R. H. (1995). Household insolvency: A review of household debt repayment, delinquency, and bankruptcy. *Financial Services Review*, 4(2), 137–156.
 - Ellerman, D. P. (1985). The mathematics of double entry bookkeeping. *Mathematics Magazine*, 58(4), 226–233.
+- European Parliament and Council (2008). Directive 2008/48/EC on credit agreements for consumers, Annex I: calculation of the annual percentage rate of charge.
 - Fisher, I. (1930). *The Theory of Interest*. New York: Macmillan.
+- Gal, D., & McShane, B. B. (2012). Can small victories help win the war? Evidence from consumer debt management. *Journal of Marketing Research*, 49(4), 487–501.
+- Gümrük ve Ticaret Bakanlığı (2015). Tüketici Kredisi Sözleşmeleri Yönetmeliği. *Resmî Gazete* 29363, 22 May 2015 (the annual cost rate).
 - Greninger, S. A., Hampton, V. L., Kitt, K. A., & Achacoso, J. A. (1996). Ratios and benchmarks for measuring the financial well-being of families and individuals. *Financial Services Review*, 5(1), 57–70.
 - IFRS Foundation. IAS 7 *Statement of Cash Flows* (classification into operating, investing and financing activities; §28, the effect of exchange rate changes on cash).
 - Juster, F. T., Lupton, J. P., Smith, J. P., & Stafford, F. (2006). The decline in household saving and the wealth effect. *Review of Economics and Statistics*, 88(1), 20–27.
+- Kellison, S. G. (2009). *The Theory of Interest* (3rd ed.). McGraw-Hill/Irwin.
 - Lytton, R. H., Garman, E. T., & Porter, N. M. (1991). How to use financial ratios when advising clients. *Financial Counseling and Planning*, 2, 3–23.
 - Manning, C. D., Raghavan, P., & Schütze, H. (2008). *Introduction to Information Retrieval*, chapter 13: Text classification and naive Bayes. Cambridge University Press.
 - McCallum, A., & Nigam, K. (1998). A comparison of event models for naive Bayes text classification. *AAAI-98 Workshop on Learning for Text Categorization*.
 - Michaud, R. O. (1989). The Markowitz optimization enigma: Is "optimized" optimal? *Financial Analysts Journal*, 45(1), 31–42.
 - Schmidt, M. (2008). The Sankey diagram in energy and material flow management, Part I: History. *Journal of Industrial Ecology*, 12(1), 82–94.
 - Selinger, P. *Tutorial on multiple currency accounting*. https://www.mathstat.dal.ca/~selinger/accounting/tutorial.html
+- Türkiye İş Bankası. Yıllık maliyet oranının hesaplanması (a note with a worked example). https://www.isbank.com.tr/bankamizi-taniyin/Documents/hakkimizda/yillik-maliyet-orani-hesaplanmasi.pdf
 - TurkStat (TÜİK). Announcements on the move of the CPI to base year 2025=100 (2025–2026).
 - United Nations, European Commission, IMF, OECD, & World Bank (2009). *System of National Accounts 2008*, chapter 12: Other changes in assets (the revaluation account; nominal, neutral and real holding gains).
 - U.S. Department of the Treasury. 31 CFR Part 356, Appendix B (the reference CPI of inflation-indexed securities).
