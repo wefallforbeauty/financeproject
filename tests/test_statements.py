@@ -1,7 +1,7 @@
 """Bank statements: the Ziraat Bankası template, statement checks, importing.
 
 The fixtures are made-up statements in Ziraat Bankası's two download formats,
-written by ``fixtures/make_ziraat_samples.py`` after a real export.
+written by ``fixtures/make_ziraat_samples.py``.
 """
 
 from datetime import date
@@ -36,25 +36,33 @@ def test_ziraat_statement_is_read_in_both_formats(statement_path):
     st = read_statement(statement_path)
     assert st.bank == "Ziraat Bankası" and st.currency == "TRY"
     assert st.period == (date(2026, 9, 1), date(2026, 9, 30))
-    assert len(st.lines) == 10
+    assert len(st.lines) == 16
     assert [line.date for line in st.lines] == sorted(line.date for line in st.lines)  # oldest first
     assert st.lines[0].amount == Decimal("45000.00") and st.lines[0].balance == Decimal("57500.00")
-    assert st.opening_balance == Decimal("12500.00") and st.closing_balance == Decimal("41724.55")
-    assert st.debit_total == Decimal("-20775.45") and st.credit_total == Decimal("50000.00")
+    assert st.opening_balance == Decimal("12500.00") and st.closing_balance == Decimal("35086.32")
+    assert st.debit_total == Decimal("-30413.68") and st.credit_total == Decimal("53000.00")
     # same-day lines keep their order: receipt numbers F15404, F15405, F15406
-    assert [line.reference for line in st.lines[4:7]] == ["F15404", "F15405", "F15406"]
-    assert st.lines[1].payee == "MIGROS KONYA"
-    assert st.lines[5].payee == "BIM A.S. U123"
-    assert st.lines[7].payee == "ALİ VELİ"  # mobile transfer: the other person
-    assert st.lines[2].payee is None
+    assert [line.reference for line in st.lines[9:12]] == ["F15404", "F15405", "F15406"]
+    assert [line.kind for line in st.lines] == [
+        None, "fee", "fee", "card", None, "cash", None, "bill", "loan", "card", "card", "card", "transfer", "transfer", None, "card"
+    ]
+    assert st.lines[3].payee == "MIGROS KONYA"
+    assert st.lines[10].payee == "BIM A.S. U123"
+    assert st.lines[13].payee == "ALİ VELİ"  # mobile transfer: the other person
+    assert st.lines[4].payee is None
+    assert st.lines[1].payee == st.lines[2].payee == "Ziraat Bankası" and st.lines[5].payee == "ATM"
+    assert st.lines[7].payee == "ÖRNEK ELEKTRİK PERAKENDE"  # bill: the company
+    loan = st.lines[8]
+    assert (loan.loan_reference, loan.installment, loan.payee) == ("12345678-0001", 5, "Loan 12345678-0001")
 
 
 def test_both_formats_give_the_same_lines(fixtures):
     xlsx = read_statement(fixtures / "ziraat_statement.xlsx")
     html = read_statement(fixtures / "ziraat_statement.html")
-    assert [(line.date, line.amount, line.balance, line.reference, line.payee) for line in xlsx.lines] == [
-        (line.date, line.amount, line.balance, line.reference, line.payee) for line in html.lines
-    ]
+    def fields(line):
+        return (line.date, line.amount, line.balance, line.reference, line.payee, line.kind, line.loan_reference, line.installment)
+
+    assert [fields(line) for line in xlsx.lines] == [fields(line) for line in html.lines]
 
 
 def test_fixtures_match_their_generator(fixtures, tmp_path):
@@ -80,6 +88,19 @@ def test_payee_patterns():
     assert ziraat.payee_of("SANAL POS ALIŞVERİŞ İŞYERİ: ORNEK ODEME/ONLINE MAGAZA MUTABAKAT: 7") == "ORNEK ODEME/ONLINE MAGAZA"
     assert ziraat.payee_of(" AYŞE YILMAZ Ziraat Mobil Havale") == "AYŞE YILMAZ"
     assert ziraat.payee_of("KİRA ÖDEMESİ") is None
+
+
+def test_line_kinds():
+    read = ziraat.read_description
+    assert read("99999999-0001 hesap 12. taksit ödeme tutarı") == ziraat.Reading("loan", "Loan 99999999-0001", "99999999-0001", 12)
+    assert read(" 99999999-0001  hesap 3 . taksit ödeme tutarı ").installment == 3
+    assert read("KOMİSYON TUTARI") == ziraat.Reading("fee", "Ziraat Bankası")
+    assert read("ATM QR PARA ÇEKME HESAP:0000 ATM: Z0001 ORNEK").kind == "cash"
+    assert read("ORNEK DOGALGAZ/ Abone no: 1 / Fatura no: 2").payee == "ORNEK DOGALGAZ"
+    assert read("ORNEK SU IDARESI Abone No: 1").payee == "ORNEK SU IDARESI"  # no slash
+    assert read("ORNEK KISI ODEME FAST").kind == "transfer" and read("FASTFOOD").kind is None
+    assert read("POS ALIŞVERİŞ İŞYERİ: ORNEK ATM MARKET MUTABAKAT: 1").kind == "card"  # a shop, not a cash machine
+    assert read("KİRA ÖDEMESİ") == ziraat.Reading()
 
 
 def line(day, amount, balance, ref=None):
@@ -149,16 +170,17 @@ def test_import_with_opening_balance_and_balance_check(bank, fixtures):
     assert preview.balance_check.predicted and preview.balance_check.ok
 
     result = import_statement(s, st, fixtures / "ziraat_statement.xlsx", "Ziraat Checking", add_opening=True)
-    assert result.written and result.added == 10 and tx_count(s) == 11  # 10 lines + opening balance
-    assert [r.how for r in result.rows][:3] == ["rule #2", "rule #1", "uncategorized"]
+    assert result.written and result.added == 16 and tx_count(s) == 17  # 16 lines + opening balance
+    assert [r.how for r in result.rows][:4] == ["rule #2", "uncategorized", "uncategorized", "rule #1"]
+    assert result.unknown_loans == {"12345678-0001": 1}  # no loan with this number is defined
     check = result.balance_check
     assert check.ok and not check.predicted and check.on == date(2026, 9, 30)
-    assert account_balance(s, find_account(s, "Ziraat Checking"), date(2026, 9, 30)) == {"TRY": Decimal("41724.55")}
+    assert account_balance(s, find_account(s, "Ziraat Checking"), date(2026, 9, 30)) == {"TRY": Decimal("35086.32")}
     assert all(v == 0 for v in commodity_totals(s).values())
 
     # The same statement downloaded as HTML adds nothing: the receipt numbers match.
     again = import_statement(s, read_statement(fixtures / "ziraat_statement.html"), fixtures / "ziraat_statement.html", "Ziraat Checking")
-    assert again.added == 0 and again.duplicates == 10 and again.balance_check.ok
+    assert again.added == 0 and again.duplicates == 16 and again.balance_check.ok
     # Two equal BIM purchases on the same day are both kept (different receipt numbers).
     bim = [r for r in result.rows if r.payee == "BIM A.S. U123"]
     assert len(bim) == 2 and not any(r.duplicate for r in bim)

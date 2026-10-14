@@ -115,6 +115,7 @@ price_app = typer.Typer(help="Exchange rates, gold, CPI and prices entered by ha
 commodity_app = typer.Typer(help="Commodities: currencies, gold, funds, stocks.", no_args_is_help=True)
 person_app = typer.Typer(help="Account owners (household members).", no_args_is_help=True)
 config_app = typer.Typer(help="Settings: EVDS key, number format.", no_args_is_help=True)
+loan_app = typer.Typer(help="Loans: terms, payment plans, payments.", no_args_is_help=True)
 for sub, name in (
     (account_app, "account"),
     (txn_app, "txn"),
@@ -123,6 +124,7 @@ for sub, name in (
     (commodity_app, "commodity"),
     (person_app, "person"),
     (config_app, "config"),
+    (loan_app, "loan"),
 ):
     app.add_typer(sub, name=name)
 
@@ -733,6 +735,8 @@ def _print_import(result, dry_run: bool) -> None:
         verb = "would be added" if dry_run else "added"
         console.print(f"Opening balance {verb}: {money(value)} on {when} (the balance before the statement's first line)")
     learned = f", {result.learned} by the learned model" if result.learned else ""
+    if result.loan_payments:
+        learned += f", {result.loan_payments} loan installment{'s' if result.loan_payments != 1 else ''} split"
     if dry_run:
         console.print(
             f"[yellow]Dry run:[/] {result.new} new{learned}, {result.duplicates} already in, "
@@ -743,6 +747,13 @@ def _print_import(result, dry_run: bool) -> None:
         console.print(
             f"[green]{result.added} transactions added[/]{learned}, {result.duplicates} were already in, "
             f"{result.uncategorized} uncategorized{hint}."
+        )
+    for reference, lines in sorted(result.unknown_loans.items()):
+        verb = "would go" if dry_run else "went"
+        console.print(
+            f"[yellow]Loan {escape(reference)}:[/] {lines} installment line{'s' if lines != 1 else ''} {verb} to a category, "
+            "as no loan has this number. To split installments into principal, interest and taxes, add the loan first: "
+            f"finance loan add NAME ACCOUNT … --reference {escape(reference)}"
         )
     check = result.balance_check
     if check is not None:
@@ -1770,19 +1781,21 @@ def upcoming(
     days: Annotated[int, typer.Option(help="How many days ahead")] = 30,
     on: Annotated[Optional[str], typer.Option("--date", help="Look ahead from this day (default: today)")] = None,
 ) -> None:
-    """Payments expected in the coming days: recurring payments and card installments."""
+    """Payments expected in the coming days: recurring payments, card and loan installments."""
     from financeproject.reports.recurring import upcoming as expected
 
     today = day(on)
     with ledger(ctx) as s:
         items = expected(s, today, days)
     if not items:
-        console.print("Nothing expected (no recurring payments or installments found).")
+        console.print("Nothing expected (no recurring payments, installments or loans found).")
         return
     t = table("Date", "What", "In>", "Out>", "Unit", "Note")
     totals: dict[tuple[str, int], Decimal] = {}
     for u in items:
         when = f"{u.on:%Y-%m}" if u.kind == "installments" else str(u.on)
+        if u.note == "overdue":
+            when = f"[yellow]{when}[/]"
         totals[(u.commodity, u.direction)] = totals.get((u.commodity, u.direction), Decimal(0)) + u.amount
         t.add_row(
             when, escape(u.label[:40]), money(u.amount) if u.direction > 0 else "", money(u.amount) if u.direction < 0 else "",
@@ -1796,6 +1809,530 @@ def upcoming(
         )
     console.print(f"[bold]Expected[/] · {today} – {today + timedelta(days=days)}")
     console.print(t)
+
+
+# --------------------------------------------------------------------------- 02: loans and debts
+
+
+def _percent(text: str, option: str) -> Decimal:
+    """'3.49' or '3,49' (per cent) → 0.0349."""
+    value = parse_decimal(text)
+    if value < 0:
+        raise FinanceError(f"{option} cannot be negative.")
+    return value / 100
+
+
+def _rate(value: Decimal | float | None, decimals: int = 2) -> str:
+    return "—" if value is None else f"{float(value) * 100:.{decimals}f} %"
+
+
+def _assignments(items: list[str] | None, option: str, parse) -> dict[str, Decimal]:
+    """['Borrowed=1000', …] → {'Borrowed': Decimal('1000')}."""
+    out: dict[str, Decimal] = {}
+    for item in items or []:
+        name, sep, value = item.rpartition("=")
+        if not sep or not name.strip() or not value.strip():
+            raise FinanceError(f"{option} takes ACCOUNT=VALUE, for example {option} 'Borrowed=1000'.")
+        out[name.strip()] = parse(value)
+    return out
+
+
+def _print_loan(loan, inferred: bool = False) -> None:
+    from financeproject.ledger.loans import cost_rate, plan, terms_of
+
+    items = plan(loan)
+    terms = terms_of(loan)
+    how = "worked out from the installment" if inferred else "contractual"
+    taxes = f"; with KKDF {_rate(loan.kkdf, 0)} and BSMV {_rate(loan.bsmv, 0)} of the interest, {_rate(terms.gross_rate, 3)}"
+    console.print(
+        f"[green]{escape(loan.name)}[/] ({escape(loan.account.path)}): {money(loan.principal)} at "
+        f"{_rate(loan.monthly_rate, 3)} a month ({how}){taxes if loan.kkdf or loan.bsmv else ''}"
+    )
+    if loan.method == "annuity":
+        console.print(
+            f"{loan.count} installments of {money(items[0].payment)} from {loan.first_due} to {items[-1].due} "
+            f"(the last {money(items[-1].payment)})"
+        )
+    else:
+        console.print(
+            f"{loan.count} installments from {money(items[0].payment)} down to {money(items[-1].payment)}, "
+            f"{loan.first_due} to {items[-1].due}"
+        )
+    total = sum((i.payment for i in items), Decimal(0))
+    console.print(
+        f"Paid back in all: {money(total + loan.fees)} = principal {money(loan.principal)} + interest "
+        f"{money(sum((i.interest for i in items), Decimal(0)))} + taxes {money(sum((i.taxes for i in items), Decimal(0)))}"
+        + (f" + fees {money(loan.fees)}" if loan.fees else "")
+    )
+    console.print(f"Annual cost rate (yıllık maliyet oranı): [bold]{_rate(cost_rate(loan))}[/]")
+    if loan.start_number > 1:
+        console.print(f"Installments 1–{loan.start_number - 1} count as paid before the ledger.")
+
+
+@loan_app.command("add")
+@guarded
+def loan_add(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="A short name, e.g. 'Car loan'")],
+    account: Annotated[str, typer.Argument(help="Its liability account, e.g. 'Liabilities:Loans:Car' (created if new)")],
+    principal: Annotated[str, typer.Option(help="The amount borrowed")],
+    count: Annotated[int, typer.Option(help="Number of monthly installments")],
+    first_due: Annotated[str, typer.Option(help="Date of the first installment; the others fall on the same day of each month")],
+    rate: Annotated[Optional[str], typer.Option(help="Contractual interest rate a month, per cent (e.g. 3.49)")] = None,
+    installment: Annotated[
+        Optional[str], typer.Option(help="Instead of --rate: the installment on your papers; the rate is worked out from it")
+    ] = None,
+    method: Annotated[str, typer.Option(help="annuity (equal installments) or equal-principal")] = "annuity",
+    kkdf: Annotated[
+        Optional[str], typer.Option(help="KKDF, per cent of the interest (default: 15 for consumer and vehicle loans, else 0)")
+    ] = None,
+    bsmv: Annotated[
+        Optional[str], typer.Option(help="BSMV, per cent of the interest (default: 15 for consumer and vehicle loans, else 0)")
+    ] = None,
+    fees: Annotated[str, typer.Option(help="Paid when the loan was taken (file fee, insurance); part of the annual cost rate")] = "0",
+    disbursed: Annotated[Optional[str], typer.Option(help="Day the loan was paid out (default: a month before the first installment)")] = None,
+    reference: Annotated[
+        Optional[str],
+        typer.Option(help="The bank's number for the loan as statements show it: their installment lines are then split"),
+    ] = None,
+    paid_into: Annotated[Optional[str], typer.Option(help="A new loan: book the payout into this account")] = None,
+    opening_on: Annotated[
+        Optional[str], typer.Option(help="A loan from before the ledger: installments due by this day count as paid")
+    ] = None,
+    owed: Annotated[Optional[str], typer.Option(help="With --opening-on: the principal owed that day (default: from the plan)")] = None,
+    kind: Annotated[str, typer.Option(help="Kind of a new account: consumer_loan, vehicle_loan, mortgage, other_debt, personal_debt")] = "consumer_loan",
+    interest_account: Annotated[str, typer.Option(help="Expense account for the interest")] = "Expenses:Interest and Fees",
+    tax_account: Annotated[Optional[str], typer.Option(help="Expense account for KKDF and BSMV (default: with the interest)")] = None,
+) -> None:
+    """Record a loan's terms; shows its payment plan and annual cost rate.
+
+    The balance comes from --paid-into (a new loan), --opening-on (a loan taken
+    before the ledger) or the account's own transactions. Rates are as on the
+    contract: the monthly interest rate without KKDF and BSMV.
+    """
+    from financeproject.core.loans import ANNUITY, EQUAL_PRINCIPAL, implied_monthly_rate
+    from financeproject.errors import AccountNotFound
+    from financeproject.ledger.loans import DEFAULT_TAXES, LOAN_KINDS, add_loan
+
+    methods = {"annuity": ANNUITY, "equal-principal": EQUAL_PRINCIPAL}
+    _check_choice(method, tuple(methods), "--method")
+    _check_choice(kind, LOAN_KINDS, "--kind")
+    if (rate is None) == (installment is None):
+        raise FinanceError("Give either the monthly interest rate (--rate) or the installment (--installment).")
+    if owed is not None and opening_on is None:
+        raise FinanceError("--owed needs --opening-on.")
+    if count < 1:
+        raise FinanceError("--count must be at least 1.")
+    with ledger(ctx) as s:
+        try:
+            acc = acc_mod.find_account(s, account)
+        except AccountNotFound:
+            if not account.strip().casefold().startswith("liabilities:"):
+                raise FinanceError(
+                    f"No account matches {account!r}. To create one give its full path, e.g. 'Liabilities:Loans:{name}'."
+                ) from None
+            acc = acc_mod.create_account(s, account, kind=kind, commodity="TRY")
+            console.print(f"Account created: {escape(acc.path)} ({kind})")
+        default_kkdf, default_bsmv = DEFAULT_TAXES.get(acc.kind, (Decimal(0), Decimal(0)))
+        k = _percent(kkdf, "--kkdf") if kkdf is not None else default_kkdf
+        b = _percent(bsmv, "--bsmv") if bsmv is not None else default_bsmv
+        p = amount(principal)
+        if rate is not None:
+            monthly = _percent(rate, "--rate")
+        else:
+            if method != "annuity":
+                raise FinanceError("--installment works with equal installments (annuity); give --rate for equal principal.")
+            try:
+                monthly = implied_monthly_rate(p, amount(installment), count, 1 + k + b)
+            except ValueError as exc:
+                raise FinanceError(str(exc)) from exc
+        loan = add_loan(
+            s,
+            name,
+            acc,
+            principal=p,
+            monthly_rate=monthly,
+            count=count,
+            first_due=parse_date(first_due),
+            disbursed=parse_date(disbursed) if disbursed else None,
+            method=methods[method],
+            kkdf=k,
+            bsmv=b,
+            fees=amount(fees),
+            reference=reference,
+            interest_account=interest_account,
+            tax_account=tax_account,
+            disburse_to=paid_into,
+            opening_on=parse_date(opening_on) if opening_on else None,
+            opening_owed=amount(owed) if owed is not None else None,
+        )
+        _print_loan(loan, inferred=installment is not None)
+
+
+@loan_app.command("list")
+@guarded
+def loan_list(ctx: typer.Context, on: DateOption = None) -> None:
+    """The loans: what they owe, what they cost, what is left to pay."""
+    from financeproject.ledger.loans import all_loans, cost_rate, loan_state
+
+    at = day(on)
+    with ledger(ctx) as s:
+        loans = all_loans(s)
+        if not loans:
+            console.print(
+                "No loans yet. Add one with: finance loan add NAME ACCOUNT --principal … --rate … --count … --first-due …"
+            )
+            return
+        t = table("Loan", "Account", "Owed>", "Rate a month>", "Cost a year>", "Paid>", "Next due", "Next>", "Left to pay>", "Last")
+        replanned = False
+        for loan in loans:
+            st = loan_state(s, loan, at)
+            nxt = st.next
+            replanned |= st.replanned
+            due = "—" if nxt is None else (f"[yellow]{nxt.due} overdue[/]" if nxt.due < at else str(nxt.due))
+            t.add_row(
+                escape(loan.name), escape(loan.account.path), money(st.owed), _rate(loan.monthly_rate, 3), _rate(cost_rate(loan)),
+                f"{st.paid}/{loan.count}", due, money(nxt.payment) if nxt else "—",
+                money(st.still_to_pay) + (" *" if st.replanned else ""), str(st.last_due or "—"),
+            )
+        console.print(f"[bold]Loans[/] · {at}")
+        console.print(t)
+        console.print("[dim]Rate a month: contractual, without KKDF and BSMV. Cost a year: the annual cost rate of the terms.[/]")
+        if replanned:
+            console.print(
+                "[dim]* The ledger's balance differs from the plan (an early repayment, or other terms): "
+                "the installments left are worked out from the balance.[/]"
+            )
+
+
+@loan_app.command("schedule")
+@guarded
+def loan_schedule(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="The loan's name or account")],
+    csv_file: Annotated[Optional[Path], typer.Option("--csv", help="Also write the plan to this CSV file")] = None,
+) -> None:
+    """A loan's payment plan, with the installments paid so far."""
+    import csv
+
+    from financeproject.ledger.loans import get_loan, plan
+
+    today = day(None)
+    with ledger(ctx) as s:
+        loan = get_loan(s, name)
+        items = plan(loan)
+        paid = {p.number: p.transaction.date for p in loan.payments if p.number is not None}
+        t = table("#>", "Due", "Installment>", "Principal>", "Interest>", "KKDF>", "BSMV>", "Owed after>", "")
+        for i in items:
+            if i.number in paid:
+                status = f"paid {paid[i.number]}"
+            elif i.number < loan.start_number:
+                status = "before the ledger"
+            elif i.due < today:
+                status = "[yellow]overdue[/]"
+            else:
+                status = ""
+            t.add_row(
+                str(i.number), str(i.due), money(i.payment), money(i.principal), money(i.interest), money(i.kkdf),
+                money(i.bsmv), money(i.balance), status,
+            )
+        t.add_section()
+
+        def total(attr: str) -> str:
+            return f"[bold]{money(sum((getattr(i, attr) for i in items), Decimal(0)))}[/]"
+
+        t.add_row("", "[bold]Total[/]", total("payment"), total("principal"), total("interest"), total("kkdf"), total("bsmv"), "", "")
+        _print_loan(loan)
+        console.print(t)
+        if csv_file is not None:
+            with csv_file.open("w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["number", "due", "installment", "principal", "interest", "kkdf", "bsmv", "owed_after", "paid_on"])
+                for i in items:
+                    w.writerow([i.number, i.due, i.payment, i.principal, i.interest, i.kkdf, i.bsmv, i.balance, paid.get(i.number, "")])
+            console.print(f"Written: {csv_file}")
+
+
+@loan_app.command("pay")
+@guarded
+def loan_pay(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="The loan's name or account")],
+    from_: Annotated[str, typer.Option("--from", help="Account paid from")],
+    value: Annotated[Optional[str], typer.Option("--amount", help="Default: the planned installment")] = None,
+    number: Annotated[Optional[int], typer.Option(help="The installment paid (default: the next unpaid one)")] = None,
+    extra: Annotated[bool, typer.Option(help="An early repayment outside the installments: all of it lowers the principal")] = False,
+    on: DateOption = None,
+) -> None:
+    """Pay a loan: the next installment as planned, another amount, or an early repayment."""
+    from financeproject.ledger.loans import get_loan, record_payment
+
+    if extra and number is not None:
+        raise FinanceError("--extra is a payment outside the installments; leave out --number.")
+    with ledger(ctx) as s:
+        loan = get_loan(s, name)
+        tx = record_payment(s, loan, day(on), from_, amount(value) if value else None, number, extra=extra)
+        principal = sum((p.amount for p in tx.postings if p.account_id == loan.account_id), Decimal(0))
+        paid = -sum((p.amount for p in tx.postings if p.amount < 0), Decimal(0))
+        console.print(
+            f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)}: {money(paid)} = principal {money(principal)} + "
+            f"interest and taxes {money(paid - principal)}"
+        )
+
+
+@loan_app.command("delete")
+@guarded
+def loan_delete(ctx: typer.Context, name: Annotated[str, typer.Argument(help="The loan's name or account")]) -> None:
+    """Forget a loan's terms; its account and transactions stay."""
+    from financeproject.ledger.loans import delete_loan, get_loan
+
+    with ledger(ctx) as s:
+        loan = get_loan(s, name)
+        label = loan.name
+        delete_loan(s, loan)
+    console.print(f"Loan terms deleted: {escape(label)} (the account and its transactions are kept)")
+
+
+@app.command()
+@guarded
+def apr(
+    principal: Annotated[str, typer.Option("--amount", help="The credit you receive")],
+    count: Annotated[int, typer.Option(help="Number of monthly installments")],
+    installment: Annotated[Optional[str], typer.Option(help="The installment offered")] = None,
+    last: Annotated[Optional[str], typer.Option(help="With --installment: a last installment that differs")] = None,
+    rate: Annotated[Optional[str], typer.Option(help="Instead of --installment: the interest rate a month, per cent")] = None,
+    kkdf: Annotated[str, typer.Option(help="With --rate: KKDF, per cent of the interest")] = "15",
+    bsmv: Annotated[str, typer.Option(help="With --rate: BSMV, per cent of the interest")] = "15",
+    method: Annotated[str, typer.Option(help="With --rate: annuity or equal-principal")] = "annuity",
+    fees: Annotated[str, typer.Option(help="Paid at the start: file fee, insurance, account fee")] = "0",
+    first_in: Annotated[int, typer.Option(help="Months until the first installment")] = 1,
+) -> None:
+    """The cost of a credit offer: its annual cost rate (yıllık maliyet oranı).
+
+    The rate at which the credit received equals the installments and fees
+    paid, all discounted to the same day (Directive 2008/48/EC Annex I; the
+    Turkish consumer credit regulation uses the same formula).
+    """
+    from datetime import date as date_
+
+    from financeproject.core.loans import (
+        ANNUITY,
+        EQUAL_PRINCIPAL,
+        LoanTerms,
+        offer_cost_rate,
+        schedule,
+    )
+
+    if count < 1 or first_in < 0:
+        raise FinanceError("--count must be at least 1 and --first-in at least 0.")
+    if (rate is None) == (installment is None):
+        raise FinanceError("Give either the installment (--installment) or the monthly interest rate (--rate).")
+    p = amount(principal)
+    if installment is not None:
+        payments = [amount(installment)] * count
+        if last is not None:
+            payments[-1] = amount(last)
+        how = f"{count} installments of {money(payments[0])}" + (f" (the last {money(payments[-1])})" if last else "")
+    else:
+        if last is not None:
+            raise FinanceError("--last goes with --installment.")
+        methods = {"annuity": ANNUITY, "equal-principal": EQUAL_PRINCIPAL}
+        _check_choice(method, tuple(methods), "--method")
+        try:
+            terms = LoanTerms(p, _percent(rate, "--rate"), count, date_(2001, 1, 1), methods[method], _percent(kkdf, "--kkdf"), _percent(bsmv, "--bsmv"))
+        except ValueError as exc:
+            raise FinanceError(str(exc)) from exc
+        payments = [i.payment for i in schedule(terms)]
+        how = (
+            f"{count} installments at {_rate(terms.monthly_rate, 3)} a month with KKDF {_rate(terms.kkdf, 0)} and BSMV "
+            f"{_rate(terms.bsmv, 0)}: {money(payments[0])}" + (f" … {money(payments[-1])}" if payments[-1] != payments[0] else " each")
+        )
+    fee = amount(fees)
+    try:
+        x = offer_cost_rate(p, payments, fee, first_in)
+    except ValueError as exc:
+        raise FinanceError(str(exc)) from exc
+    total = sum(payments, Decimal(0)) + fee
+    monthly = (1 + x) ** (1 / 12) - 1
+    console.print(f"Credit {money(p)}; {how}, the first in {first_in} month{'s' if first_in != 1 else ''}" + (f"; fees {money(fee)}" if fee else ""))
+    console.print(f"Paid back in all: {money(total)} (cost {money(total - p)})")
+    console.print(f"Annual cost rate (yıllık maliyet oranı): [bold]{_rate(x)}[/]")
+    console.print(f"Cost a month: {_rate(monthly, 3)}; a year {_rate(monthly * 12)} simple (× 12), {_rate(x)} compounded")
+
+
+@app.command("cash-or-installments")
+@guarded
+def cash_or_installments_cmd(
+    ctx: typer.Context,
+    cash: Annotated[str, typer.Option(help="The price if you pay now")],
+    installment: Annotated[str, typer.Option(help="One installment")],
+    count: Annotated[int, typer.Option(help="Number of installments")],
+    first_in: Annotated[int, typer.Option(help="Months until the first installment (0: the first is paid now)")] = 1,
+    rate: Annotated[Optional[str], typer.Option(help="What your money earns meanwhile, per cent a month (e.g. a deposit after tax)")] = None,
+    annual_rate: Annotated[Optional[str], typer.Option(help="The same, per cent a year")] = None,
+) -> None:
+    """Pay cash or in installments? Compares them in today's money.
+
+    The installments are discounted at what the money earns while it stays
+    with you (--rate or --annual-rate). Without either, at the CPI's inflation
+    over the last twelve months: a comparison in real terms.
+    """
+    from financeproject.core.loans import (
+        cash_or_installments,
+        effective_annual,
+        monthly_from_annual,
+    )
+    from financeproject.reports.debt import trailing_inflation
+
+    if rate is not None and annual_rate is not None:
+        raise FinanceError("Give --rate or --annual-rate, not both.")
+    if rate is not None:
+        monthly, source = float(_percent(rate, "--rate")), "given"
+    elif annual_rate is not None:
+        monthly, source = monthly_from_annual(float(_percent(annual_rate, "--annual-rate"))), "given"
+    else:
+        with ledger(ctx) as s:
+            expected = trailing_inflation(s)
+        if expected is None:
+            raise FinanceError("No CPI in the ledger: give what your money earns with --rate or --annual-rate (or run 'finance cpi').")
+        monthly, source = monthly_from_annual(expected.rate), f"inflation, {expected.source}"
+    try:
+        r = cash_or_installments(amount(cash), amount(installment), count, monthly, first_in)
+    except ValueError as exc:
+        raise FinanceError(str(exc)) from exc
+    when = "the first now" if first_in == 0 else f"the first in {first_in} month{'s' if first_in != 1 else ''}"
+    console.print(f"Cash {money(r.cash_price)} now, or {count} × {money(r.installment)} = {money(r.total)}, {when}.")
+    if r.implied_rate > 1e-9:
+        console.print(
+            f"The installments charge {_rate(r.implied_rate)} a month ({_rate(effective_annual(r.implied_rate))} a year) over the cash price."
+        )
+    elif r.implied_rate < -1e-9:
+        console.print(f"The installments come to less than the cash price: a discount of {_rate(-r.implied_rate)} a month.")
+    else:
+        console.print("The installments add up to the cash price: no interest.")
+    console.print(f"Money kept meanwhile: {_rate(monthly)} a month ({_rate(effective_annual(monthly))} a year; {source}).")
+    verdict = "the installments are cheaper" if r.installments_win else "cash is cheaper"
+    gap = abs(Decimal(repr(r.advantage))).quantize(Decimal("0.01"))
+    console.print(
+        f"In today's money the installments cost {money(r.present_value)}: {money(gap)} "
+        f"{'less' if r.installments_win else 'more'} than cash → [bold]{verdict}[/]."
+    )
+
+
+@app.command()
+@guarded
+def payoff(
+    ctx: typer.Context,
+    budget: Annotated[str, typer.Option(help="What you can pay towards debts each month")],
+    rate: Annotated[
+        Optional[list[str]], typer.Option(help="ACCOUNT=PER-CENT-A-MONTH for a debt that is not a loan (repeatable)")
+    ] = None,
+    minimum: Annotated[Optional[list[str]], typer.Option(help="ACCOUNT=AMOUNT: that debt's least monthly payment (repeatable)")] = None,
+    on: DateOption = None,
+) -> None:
+    """Plan paying off debts: highest rate first (avalanche) or smallest debt first (snowball).
+
+    Takes the loans defined in the ledger (their rate with taxes, their
+    installment as the least payment) and the debts named with --rate or
+    --minimum. Every month each debt gets its least payment and the rest of the
+    budget goes to one debt at a time; a debt paid off frees its payment for the
+    next. Early repayment fees are not counted.
+    """
+    from financeproject.core.loans import AVALANCHE, LEAST, SNOWBALL
+    from financeproject.core.loans import payoff as simulate
+    from financeproject.reports.debt import payoff_debts
+
+    b = amount(budget)
+    at = day(on)
+    with ledger(ctx) as s:
+        debts = payoff_debts(
+            s, at, _assignments(rate, "--rate", lambda v: _percent(v, "--rate")), _assignments(minimum, "--minimum", amount)
+        )
+    if not debts:
+        raise FinanceError("No debts to plan: define loans with 'finance loan add', or name debts with --rate/--minimum.")
+    least = sum((d.minimum for d in debts), Decimal(0))
+    if b < least:
+        raise FinanceError(f"The budget {money(b)} does not cover the least payments, {money(least)} a month.")
+    t = table("Debt", "Owed>", "Rate a month>", "Least payment>")
+    for d in debts:
+        t.add_row(escape(d.name), money(d.balance), _rate(d.monthly_rate, 3), money(d.minimum))
+    console.print(f"[bold]Debts[/] · {at} · rates include KKDF and BSMV")
+    console.print(t)
+    plans = [("As now: least payments only", simulate(debts, least, LEAST))]
+    plans += [
+        ("Avalanche: highest rate first", simulate(debts, b, AVALANCHE)),
+        ("Snowball: smallest debt first", simulate(debts, b, SNOWBALL)),
+    ]
+    p = table("Plan", "Debt-free in>", "Interest and taxes>", "Order (month paid off)")
+    for label, result in plans:
+        months = f"{result.months} months" if result.feasible else "never"
+        order = ", ".join(f"{escape(n)} ({result.paid_off[n]})" for n in result.order)
+        p.add_row(label, months, money(result.interest) if result.feasible else "—", order)
+    console.print(f"[bold]Budget[/] {money(b)} a month: least payments {money(least)} + extra {money(b - least)}")
+    console.print(p)
+    avalanche, snowball = plans[-2][1], plans[-1][1]
+    if avalanche.feasible and snowball.feasible:
+        saving = snowball.interest - avalanche.interest
+        if saving > 0:
+            console.print(f"Avalanche saves {money(saving)} in interest; snowball clears a first debt sooner, which helps some people keep going.")
+        else:
+            console.print("Both orders cost the same here.")
+    console.print("[dim]Interest is charged monthly on what is owed; extra payments lower the principal at no fee.[/]")
+
+
+@app.command()
+@guarded
+def debt(
+    ctx: typer.Context,
+    on: DateOption = None,
+    inflation: Annotated[
+        Optional[str], typer.Option(help="Expected inflation, per cent a year (default: the CPI's last twelve months)")
+    ] = None,
+) -> None:
+    """Every debt: what is owed, what it costs, and what the installments left are worth after inflation."""
+    from financeproject.reports.debt import debt_report
+
+    at = day(on)
+    with ledger(ctx) as s:
+        report = debt_report(s, at, float(_percent(inflation, "--inflation")) if inflation is not None else None)
+    if not report.lines:
+        console.print(f"No debts on {at}.")
+        return
+    t = table("Debt", "Owed>", "Rate a month>", "Cost a year>", "Real a year>", "Next", "Left to pay>", "In today's money>", "Last")
+    for line in report.lines:
+        st = line.state
+        unit = "" if line.commodity == "TRY" else f" {line.commodity}"
+        if st is None:
+            t.add_row(escape(line.account), money(line.owed) + unit, "—", "—", "—", "—", "—", "—", "")
+            continue
+        nxt = f"{st.next.due} {money(st.next.payment)}" if st.next else "—"
+        t.add_row(
+            escape(st.loan.name), money(line.owed) + unit, _rate(st.loan.monthly_rate, 3), _rate(line.cost_rate),
+            _rate(line.real_rate), nxt, money(st.still_to_pay) + (" *" if st.replanned else ""),
+            money(line.today_value) if line.today_value is not None else "—", str(st.last_due or "—"),
+        )
+    t.add_section()
+    t.add_row(
+        "[bold]Total (TRY)[/]", f"[bold]{money(report.owed)}[/]", "", "", "", "", f"[bold]{money(report.still_to_pay)}[/]",
+        f"[bold]{money(report.today_value)}[/]" if report.today_value is not None else "—", "",
+    )
+    infl = f"inflation {_rate(report.inflation.rate, 1)} a year ({report.inflation.source})" if report.inflation else "no inflation figure"
+    console.print(f"[bold]Debts[/] · {at} · {infl}")
+    console.print(t)
+    for line in report.lines:
+        if line.later_installments:
+            console.print(
+                f"{escape(line.account)}: {money(line.later_installments)} of the {money(line.owed)} owed are installments "
+                "billed in later months."
+            )
+    if report.inflation and report.today_value is not None and report.still_to_pay:
+        console.print(
+            f"Inflation lightens the loans: {money(report.still_to_pay)} still to pay is worth {money(report.today_value)} in today's money."
+        )
+    console.print(
+        "[dim]Rate a month: contractual, without KKDF and BSMV. Cost a year: annual cost rate of the terms. "
+        "Real a year: interest and taxes compounded, after inflation.[/]"
+    )
 
 
 def main() -> None:

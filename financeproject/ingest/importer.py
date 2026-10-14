@@ -8,6 +8,10 @@ account. The counter account comes, in this order, from:
 3. the learned model (``ingest.learn``), when its guess is confident enough;
 4. ``Expenses:Uncategorized`` or ``Income:Uncategorized``.
 
+A statement line that pays an installment of a loan defined in the ledger
+(``finance loan add --reference``) is booked as a loan payment instead:
+principal, interest and taxes (``ledger.loans``).
+
 Every row gets an import key, so importing the same or an overlapping file
 again adds nothing twice:
 
@@ -39,11 +43,12 @@ from financeproject.ingest.rules import load_rules, match
 from financeproject.ingest.statement import Statement
 from financeproject.ledger.accounts import find_account
 from financeproject.ledger.db import UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME
-from financeproject.ledger.models import Account, Posting, Transaction
+from financeproject.ledger.loans import loan_by_reference, owed, record_payment
+from financeproject.ledger.models import Account, Loan, Posting, Transaction
 from financeproject.ledger.queries import account_balance
 from financeproject.ledger.transactions import Leg, add_transaction, opening_balance
 
-HOW_FILE, HOW_UNCATEGORIZED = "file", "uncategorized"
+HOW_FILE, HOW_UNCATEGORIZED, HOW_LOAN = "file", "uncategorized", "loan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +64,9 @@ class Row:
     payee: str | None = None
     note: str | None = None
     reference: str | None = None
+    loan_id: int | None = None
+    """The loan this row pays (statement lines that name a defined loan)."""
+    installment: int | None = None
 
 
 def import_key(account_path: str, row: Row, occurrence: int) -> str:
@@ -113,6 +121,8 @@ class ImportResult:
     opening: tuple[date, Decimal] | None = None
     """The opening balance taken from a statement (added, or to be added on a dry run)."""
     balance_check: BalanceCheck | None = None
+    unknown_loans: dict[str, int] = field(default_factory=dict)
+    """Loan numbers on installment lines that no defined loan has, with their line counts."""
 
     @property
     def new(self) -> int:
@@ -133,6 +143,21 @@ class ImportResult:
     @property
     def learned(self) -> int:
         return sum(1 for r in self.rows if not r.duplicate and r.how.startswith("model"))
+
+    @property
+    def loan_payments(self) -> int:
+        return sum(1 for r in self.rows if not r.duplicate and r.how.startswith(HOW_LOAN))
+
+
+def _check_loan_row(session: Session, loan: Loan, row: Row) -> None:
+    """Refuse an installment line the loan's start in the ledger cannot take."""
+    if row.installment is not None and row.installment < loan.start_number:
+        raise FinanceError(
+            f"installment {row.installment} of {loan.name} counts as paid before the ledger began; "
+            "add the loan again with an earlier --opening-on date"
+        )
+    if owed(session, loan, row.date) <= 0:
+        raise FinanceError(f"{loan.name} owed nothing on {row.date}; its balance (opening or payout) must start earlier")
 
 
 def import_rows(
@@ -170,7 +195,18 @@ def import_rows(
                 raise FinanceError("no account (the file needs an 'account' column, or give --account)")
             commodity = acc.commodity_code or row.commodity or "TRY"
             guess = None
-            if row.counter_account:
+            identity = fold(row.reference) if row.reference else fold(row.description)
+            base = (acc.id, row.date, row.amount.normalize(), identity)
+            seen[base] += 1
+            key = import_key(acc.path, row, seen[base])
+            duplicate = session.scalar(select(Transaction.id).where(Transaction.import_key == key)) is not None
+            if row.loan_id is not None:
+                loan = session.get(Loan, row.loan_id)
+                if not duplicate:
+                    _check_loan_row(session, loan, row)
+                counter = loan.account
+                how = f"{HOW_LOAN} {loan.name}" + (f" #{row.installment}" if row.installment else "")
+            elif row.counter_account:
                 counter, how = find_account(session, row.counter_account), HOW_FILE
             elif rule := match(rules, " ".join(filter(None, [row.description, row.payee]))):
                 counter, how = rule.account, f"rule #{rule.rule_id}"
@@ -184,11 +220,6 @@ def import_rows(
             else:
                 counter = uncategorized_expense if row.amount < 0 else uncategorized_income
                 how = HOW_UNCATEGORIZED
-            identity = fold(row.reference) if row.reference else fold(row.description)
-            base = (acc.id, row.date, row.amount.normalize(), identity)
-            seen[base] += 1
-            key = import_key(acc.path, row, seen[base])
-            duplicate = session.scalar(select(Transaction.id).where(Transaction.import_key == key)) is not None
             result.rows.append(
                 PreviewRow(
                     row.line, row.date, row.description, row.amount, commodity, acc.path, counter.path, how, duplicate, row.payee
@@ -209,6 +240,21 @@ def import_rows(
             opening_balance(session, default_account, opening[1], opening[0], "Opening balance (from the bank statement)")
         for row, acc, counter, key in pending:
             try:
+                if row.loan_id is not None:
+                    record_payment(
+                        session,
+                        session.get(Loan, row.loan_id),
+                        row.date,
+                        acc,
+                        -row.amount,
+                        row.installment,
+                        description=row.description,
+                        payee=row.payee,
+                        source=transaction_source,
+                        import_key=key,
+                        partial=True,
+                    )
+                    continue
                 add_transaction(
                     session,
                     row.date,
@@ -265,17 +311,26 @@ def import_statement(
         if has_postings(session, acc):
             raise FinanceError(f"{acc.path} already has transactions; an opening balance from the statement would count them twice.")
         opening = (statement.start, statement.opening_balance)
-    rows = [
-        Row(
-            line=i,
-            date=line.date,
-            description=line.description,
-            amount=line.amount,
-            payee=line.payee,
-            reference=line.reference,
+    rows = []
+    unknown_loans: Counter[str] = Counter()
+    for i, line in enumerate(statement.lines, start=1):
+        loan = None
+        if line.loan_reference and line.amount < 0:
+            loan = loan_by_reference(session, line.loan_reference)
+            if loan is None:
+                unknown_loans[line.loan_reference] += 1
+        rows.append(
+            Row(
+                line=i,
+                date=line.date,
+                description=line.description,
+                amount=line.amount,
+                payee=line.payee,
+                reference=line.reference,
+                loan_id=loan.id if loan else None,
+                installment=line.installment if loan else None,
+            )
         )
-        for i, line in enumerate(statement.lines, start=1)
-    ]
     result = import_rows(
         session,
         rows,
@@ -288,6 +343,7 @@ def import_statement(
         min_confidence=min_confidence,
         opening=opening,
     )
+    result.unknown_loans = dict(unknown_loans)
     if statement.closing_balance is not None and not result.errors:
         commodity = acc.commodity_code or "TRY"
         ledger = account_balance(session, acc, statement.end).get(commodity, Decimal(0))

@@ -1,7 +1,9 @@
 """Write made-up Ziraat Bankası statements in the bank's two download formats.
 
-The layout copies a real export (October 2026) cell for cell, with invented
-names, numbers and transactions. The .xlsx file reproduces the quirks of the
+The layout follows the bank's download format cell for cell; every name,
+number and transaction is invented. The lines cover each kind the template
+recognizes: card purchases, transfers, the bank's fees, an ATM withdrawal, a
+bill and a loan installment. The .xlsx file reproduces the quirks of the
 bank's generator: an ``x:`` namespace prefix, no cell references, text cells
 of type ``str``, an empty ``<fill/>`` in the style sheet (which openpyxl
 rejects) and stray spaces in descriptions. The .html file starts with a
@@ -25,12 +27,23 @@ CARD = "KART NO: 4000 **** **** 0000"
 # date, receipt number, description, amount as the .xlsx stores it (oldest first)
 LINES = [
     ("01.09.2026", "F01001", "MAAŞ ÖDEMESİ ÖRNEK A.Ş.", "45000"),
+    ("02.09.2026", "F02150", "MESAJ ÜCRETİ TUTARI", "-6.90"),
+    ("02.09.2026", "F02151", "BSMV TUTARI", "-0.35"),
     ("03.09.2026", "F03112", f"POS ALIŞVERİŞ {CARD} İŞYERİ: MIGROS KONYA MUTABAKAT: 1234567", "-1234.56"),
     ("05.09.2026", "F05220", "KİRA ÖDEMESİ EFT ÖRNEK EMLAK", "-15000"),
+    ("07.09.2026", "F07250", "ATM PARA ÇEKME KART:4000****0000 ATM: Z0042 ÖRNEK ŞUBESİ", "-2250"),
     ("10.09.2026", "F10301", "TURKCELL FATURA ÖDEMESİ", "-389.9"),
+    (
+        "11.09.2026",
+        "F11330",
+        "ÖRNEK ELEKTRİK PERAKENDE/ Abone no: 10000001 / Fatura no: 2000002 / Fatura Tutarı: 456,78 / Son Ödeme: 18.09.2026",
+        "-456.78",
+    ),
+    ("13.09.2026", "F13440", "12345678-0001 hesap 5. taksit ödeme tutarı", "-6924.20"),
     ("15.09.2026", "F15404", f"SANAL POS ALIŞVERİŞ {CARD} İŞYERİ: NETFLIX.COM MUTABAKAT: 7654321", "-229.99"),
     ("15.09.2026", "F15405", f"POS ALIŞVERİŞ (YURTİÇİ) {CARD} İŞYERİ: BIM A.S. U123  MUTABAKAT: 1111111", "-85.50"),
     ("15.09.2026", "F15406", f"POS ALIŞVERİŞ (YURTİÇİ) {CARD} İŞYERİ: BIM A.S. U123  MUTABAKAT: 1111112 ", "-85.50"),
+    ("18.09.2026", "F18550", "ÖRNEK KİŞİ KİRA PAYI FAST", "3000"),
     ("20.09.2026", "F20507", " ALİ VELİ Ziraat Mobil Havale", "-2000.00"),
     ("25.09.2026", "F25608", "VADELİ HESAPTAN AKTARIM", "5000"),
     ("28.09.2026", "F28709", f"POS ALIŞVERİŞ {CARD} İŞYERİ: OPET AKARYAKIT MUTABAKAT: 2222222", "-1750"),

@@ -18,13 +18,26 @@ date     receipt  description                signed amount            balance
   money in).
 - The .html page starts with a bot-protection script, which is skipped.
 
-Card purchases name the merchant (``İŞYERİ: … MUTABAKAT: …``) and mobile
-transfers start with the other person's name; both become the payee.
+The description tells the kind of most lines (``StatementLine.kind``):
+
+- ``card``: card purchases name the merchant (``İŞYERİ: … MUTABAKAT: …``),
+  which becomes the payee;
+- ``transfer``: mobile transfers (``<name> Ziraat Mobil Havale``, the name
+  becomes the payee) and FAST transfers;
+- ``fee``: the bank's charges (``MESAJ ÜCRETİ TUTARI``, ``KOMİSYON TUTARI``
+  and the ``BSMV TUTARI`` tax on them), payee Ziraat Bankası;
+- ``cash``: ATM withdrawals and deposits, payee ATM;
+- ``bill``: bill payments with a subscriber number (``<company>/ Abone no:
+  …``), the company becomes the payee;
+- ``loan``: loan installments (``<loan number> hesap <n>. taksit ödeme
+  tutarı``), with the loan's number and the installment's number, so that the
+  import can split them into principal, interest and taxes.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
@@ -57,6 +70,9 @@ _PERIOD = re.compile(r"(\d{1,2}\.\d{1,2}\.\d{4})\s*-\s*(\d{1,2}\.\d{1,2}\.\d{4})
 _TOTAL = re.compile(r"^(borc|alacak)\s*:\s*(.*)$")
 _MERCHANT = re.compile(r"(?:İŞYERİ|ISYERI)\s*:\s*(.+?)\s*(?:MUTABAKAT\s*:|$)", re.IGNORECASE)
 _MOBILE_TRANSFER = re.compile(r"^(.+?)\s+Ziraat Mobil Havale\b", re.IGNORECASE)
+_LOAN_INSTALLMENT = re.compile(r"^\s*(\S+)\s+hesap\s+(\d+)\s*\.\s*taksit ödeme tutarı\s*$", re.IGNORECASE)
+_FEES = {"mesaj ucreti tutari", "komisyon tutari", "bsmv tutari"}
+_SUBSCRIBER = re.compile(r"\bABONE\s+NO\b", re.IGNORECASE)
 _CURRENCY_WORDS = {"TL": "TRY", "TRY": "TRY", "USD": "USD", "EUR": "EUR", "GBP": "GBP", "CHF": "CHF", "JPY": "JPY"}
 
 
@@ -121,13 +137,39 @@ def _amount(cell: Cell) -> Decimal | None:
         raise FinanceError(f"Cannot read the amount {text!r}") from exc
 
 
+@dataclass(frozen=True)
+class Reading:
+    kind: str | None = None
+    payee: str | None = None
+    loan_reference: str | None = None
+    installment: int | None = None
+
+
+def read_description(description: str) -> Reading:
+    """What a description says: the kind of line, the payee, and for loans the numbers."""
+    text = " ".join(description.split())
+    folded = fold(text)
+    if m := _LOAN_INSTALLMENT.match(text):
+        return Reading("loan", f"Loan {m.group(1)}", m.group(1), int(m.group(2)))
+    if folded in _FEES:
+        return Reading("fee", NAME)
+    if m := _MERCHANT.search(text):
+        return Reading("card", " ".join(m.group(1).split()) or None)
+    if m := _MOBILE_TRANSFER.match(text):
+        return Reading("transfer", " ".join(m.group(1).split()) or None)
+    if folded.startswith("atm"):
+        return Reading("cash", "ATM")
+    if m := _SUBSCRIBER.search(text):
+        company = text[: m.start()].split("/", 1)[0].strip(" /-:")
+        return Reading("bill", company or None)
+    if re.search(r"(?<![a-z])fast(?![a-z])", folded):
+        return Reading("transfer")
+    return Reading()
+
+
 def payee_of(description: str) -> str | None:
-    """The merchant of a card purchase, or the other person of a mobile transfer."""
-    if m := _MERCHANT.search(description):
-        return " ".join(m.group(1).split()) or None
-    if m := _MOBILE_TRANSFER.match(description.strip()):
-        return " ".join(m.group(1).split()) or None
-    return None
+    """The payee the template reads from a description, if any."""
+    return read_description(description).payee
 
 
 def _currency(rows: list[list[Cell]]) -> str | None:
@@ -186,6 +228,7 @@ def parse(rows: list[list[Cell]], file_format: str) -> Statement:
         amount = _amount(_cell(row, columns["amount"]))
         if amount is None or amount == 0:
             raise FinanceError(f"A line of {on} has no amount: {description[:60]!r}")
+        reading = read_description(description)
         lines.append(
             StatementLine(
                 date=on,
@@ -193,7 +236,10 @@ def parse(rows: list[list[Cell]], file_format: str) -> Statement:
                 amount=amount,
                 balance=_amount(_cell(row, columns["balance"])),
                 reference=_text(_cell(row, columns["reference"])) or None,
-                payee=payee_of(description),
+                payee=reading.payee,
+                kind=reading.kind,
+                loan_reference=reading.loan_reference,
+                installment=reading.installment,
             )
         )
     if not lines:

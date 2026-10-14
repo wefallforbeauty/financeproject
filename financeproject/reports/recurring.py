@@ -7,8 +7,10 @@ and reference numbers do not split a series. The detection rule is in
 ``core.recurring``.
 
 ``upcoming`` lists what is expected in the next days: the next payments of the
-active and late series, and the card installments falling due (installments
-are known by month, not by day; they are listed on the first of their month).
+active and late series, the card installments falling due (installments are
+known by month, not by day; they are listed on the first of their month) and
+the installments of loans, unpaid ones from earlier days too. Loan payments
+have three or more legs, so they never form a series themselves.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from financeproject.core.dates import month_start
 from financeproject.core.recurring import LATE, STOPPED, Occurrence, Series, find_series
 from financeproject.ingest.learn import simple_transactions, words
 from financeproject.ledger.installments import due_between
+from financeproject.ledger.loans import all_loans, loan_state
 
 
 def candidates(session: Session) -> dict[tuple, tuple[str, str, int, str, list[Occurrence]]]:
@@ -53,7 +56,7 @@ class Upcoming:
     commodity: str
     direction: int
     kind: str
-    """``recurring`` or ``installments``."""
+    """``recurring``, ``installments`` or ``loan``."""
     note: str = ""
 
 
@@ -79,4 +82,12 @@ def upcoming(session: Session, today: date, days: int = 30, series: list[Series]
     for (month, account), amount in sorted(by_card.items()):
         card = account.split(":")[-1]
         out.append(Upcoming(month, f"Card installments ({card})", amount, "TRY", -1, "installments", "due this month"))
+    for loan in all_loans(session):
+        state = loan_state(session, loan, today)
+        unit = loan.account.commodity_code or "TRY"
+        for i in state.remaining:
+            if i.due > end:
+                break
+            note = "overdue" if i.due < today else f"{i.number} of {loan.count}"
+            out.append(Upcoming(i.due, f"{loan.name}: installment {i.number}", i.payment, unit, -1, "loan", note))
     return sorted(out, key=lambda u: (u.on, -u.amount))

@@ -8,8 +8,11 @@ month:
   subscriptions (one gets more expensive halfway);
 - card purchases at named shops, two of them in installments (a laptop in 6,
   a washing machine in 9);
-- card payments (the month's purchases plus the installments due), loan
-  payments, private pension contributions, savings in dollars and gold.
+- card payments (the month's purchases plus the installments due), private
+  pension contributions, savings in dollars and gold;
+- a consumer loan taken before the ledger starts (its terms are recorded, so
+  every installment splits into principal, interest and taxes), and money
+  borrowed from a friend, paid back in monthly parts.
 
 In the last two months a third of the card purchases stay uncategorized, as if
 imported without rules, so that ``finance categorize`` has something to learn.
@@ -30,14 +33,14 @@ from sqlalchemy.orm import Session
 
 from financeproject.core.dates import add_months, month_end, month_start
 from financeproject.core.inflation import Deflator
+from financeproject.core.loans import same_day_months_later
 from financeproject.core.money import quantum
 from financeproject.core.prices import PriceBook, Quote
 from financeproject.ledger.accounts import create_account
 from financeproject.ledger.db import UNCATEGORIZED_EXPENSE
 from financeproject.ledger.installments import record_installment_purchase, split_amount
+from financeproject.ledger.loans import add_loan, next_number, record_payment
 from financeproject.ledger.transactions import (
-    Leg,
-    add_transaction,
     opening_balance,
     record_exchange,
     record_expense,
@@ -48,6 +51,8 @@ from financeproject.ledger.transactions import (
 SYNTHETIC_SOURCE = "synthetic"
 CARD = "Liabilities:Credit Card:Sample Card"
 CHECKING = "Assets:Bank:Checking TRY"
+LOAN = "Liabilities:Loan:Consumer Loan"
+FRIEND = "Liabilities:Personal:Borrowed from a Friend"
 
 ACCOUNTS = (
     # path, kind, commodity, owner, institution
@@ -59,7 +64,8 @@ ACCOUNTS = (
     ("Assets:Pension:BES", "pension", "TRY", "Me", "Sample Pension"),
     ("Assets:Bank:Dad's Checking", "checking", "TRY", "Dad", "Other Bank"),
     (CARD, "credit_card", "TRY", "Me", "Sample Bank"),
-    ("Liabilities:Loan:Consumer Loan", "consumer_loan", "TRY", "Me", "Sample Bank"),
+    (LOAN, "consumer_loan", "TRY", "Me", "Sample Bank"),
+    (FRIEND, "personal_debt", "TRY", "Me", None),
 )
 CATEGORIES = (
     "Expenses:Rent",
@@ -88,7 +94,7 @@ OPENING = (
     ("Assets:Pension:BES", "60000"),
     ("Assets:Bank:Dad's Checking", "25000"),
     (CARD, "8000"),
-    ("Liabilities:Loan:Consumer Loan", "60000"),
+    (FRIEND, "20000"),
 )
 SHOPS = (
     # category, base amount, shops (weights: groceries twice)
@@ -157,6 +163,18 @@ def build_demo(
     for path, balance in OPENING:
         opening_balance(session, path, Decimal(balance), start)
         count += 1
+    # 24 installments on the 20th, the first five months before the ledger starts
+    loan = add_loan(
+        session,
+        "Consumer loan",
+        LOAN,
+        principal=Decimal(75000),
+        monthly_rate=Decimal("0.0299"),
+        count=24,
+        first_due=same_day_months_later(start.replace(day=20), -5),
+        opening_on=start,
+    )
+    count += 1
 
     def scale(d: date) -> float:
         if deflator is not None:
@@ -167,7 +185,7 @@ def build_demo(
     skipped = 0
     card_spent = Decimal(dict(OPENING)[CARD])
     installments_due: dict[date, Decimal] = defaultdict(Decimal)
-    loan_left = Decimal(dict(OPENING)["Liabilities:Loan:Consumer Loan"])
+    friend_left = Decimal(dict(OPENING)[FRIEND])
     last_month = month_start(end)
     month = month_start(start)
     index = 0
@@ -230,20 +248,13 @@ def build_demo(
         if due(18):
             record_expense(session, Decimal("649.00"), "Expenses:Bills:Internet", CHECKING, on(18), "SUPERONLINE internet", payee="SUPERONLINE")
             count += 1
-        if due(20) and loan_left > 0:
-            principal = min(Decimal(3000), loan_left)
-            interest = _money(float(loan_left) * 0.03)
-            add_transaction(
-                session,
-                on(20),
-                "Loan payment",
-                [
-                    Leg("Consumer Loan", principal),
-                    Leg("Expenses:Interest and Fees", interest),
-                    Leg(CHECKING, -(principal + interest)),
-                ],
-            )
-            loan_left -= principal
+        if due(20) and next_number(loan) is not None:
+            record_payment(session, loan, on(20), CHECKING)
+            count += 1
+        if due(22) and friend_left > 0:
+            part = min(Decimal(1250), friend_left)
+            record_transfer(session, part, CHECKING, FRIEND, on(22), "Paid back to a friend")
+            friend_left -= part
             count += 1
         if due(25):
             record_transfer(session, _money(2000 * f), CHECKING, "Pension:BES", on(25), "Pension contribution")

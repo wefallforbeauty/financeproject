@@ -119,6 +119,9 @@ class Transaction(Base):
     installment_plan: Mapped[InstallmentPlan | None] = relationship(
         back_populates="transaction", cascade="all, delete-orphan", uselist=False
     )
+    loan_payment: Mapped[LoanPayment | None] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Posting(Base):
@@ -157,6 +160,57 @@ class InstallmentPlan(Base):
 
     transaction: Mapped[Transaction] = relationship(back_populates="installment_plan")
     account: Mapped[Account] = relationship()
+
+
+class Loan(Base):
+    """The terms of a loan whose balance is a liability account.
+
+    The terms give the payment plan; payments are ordinary transactions linked
+    through ``LoanPayment``. Rates are fractions: a monthly rate of 3.49 % is
+    0.0349, KKDF and BSMV of 15 % are 0.15.
+    """
+
+    __tablename__ = "loans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), unique=True)
+    principal: Mapped[Decimal] = mapped_column(DecimalText(48))
+    monthly_rate: Mapped[Decimal] = mapped_column(DecimalText(48))
+    count: Mapped[int] = mapped_column(Integer)
+    first_due: Mapped[dt.date] = mapped_column(Date)
+    disbursed: Mapped[dt.date] = mapped_column(Date)
+    method: Mapped[str] = mapped_column(String(20), default="annuity")
+    kkdf: Mapped[Decimal] = mapped_column(DecimalText(48), default=Decimal(0))
+    bsmv: Mapped[Decimal] = mapped_column(DecimalText(48), default=Decimal(0))
+    fees: Mapped[Decimal] = mapped_column(DecimalText(48), default=Decimal(0))
+    """Paid when the loan is taken (file fee, insurance): part of the annual cost rate."""
+    start_number: Mapped[int] = mapped_column(Integer, default=1)
+    """First installment kept in this ledger; earlier ones were paid before it."""
+    reference: Mapped[str | None] = mapped_column(String(60), unique=True)
+    """The bank's number for the loan, as it appears on statements."""
+    interest_account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    tax_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
+    """Where KKDF and BSMV go; ``None``: with the interest."""
+
+    account: Mapped[Account] = relationship(foreign_keys=[account_id])
+    interest_account: Mapped[Account] = relationship(foreign_keys=[interest_account_id])
+    tax_account: Mapped[Account | None] = relationship(foreign_keys=[tax_account_id])
+    payments: Mapped[list[LoanPayment]] = relationship(back_populates="loan", cascade="all, delete-orphan")
+
+
+class LoanPayment(Base):
+    """A transaction that paid a loan, and the installment it paid (if it was one)."""
+
+    __tablename__ = "loan_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    loan_id: Mapped[int] = mapped_column(ForeignKey("loans.id", ondelete="CASCADE"), index=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"), unique=True)
+    number: Mapped[int | None] = mapped_column(Integer)
+
+    loan: Mapped[Loan] = relationship(back_populates="payments")
+    transaction: Mapped[Transaction] = relationship(back_populates="loan_payment")
 
 
 class Price(Base):
