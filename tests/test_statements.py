@@ -144,7 +144,11 @@ def test_unknown_files_are_refused(tmp_path, fixtures):
     with pytest.raises(FinanceError, match="Unknown bank"):
         read_statement(fixtures / "ziraat_statement.xlsx", bank="other")
     with pytest.raises(FinanceError, match="No bank template"):
-        read_statement(tmp_path / "statement.pdf")
+        read_statement(tmp_path / "statement.txt")
+    broken = tmp_path / "statement.pdf"
+    broken.write_bytes(b"not a pdf")
+    with pytest.raises(FinanceError, match="Cannot read the PDF"):
+        read_statement(broken)
 
 
 @pytest.fixture

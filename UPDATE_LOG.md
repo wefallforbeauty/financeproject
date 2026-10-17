@@ -1,5 +1,78 @@
 # Update log
 
+## 03 (2026-10-17)
+
+Pull request #5. Version 03 is the investments module: fund prices from TEFAS
+and share prices from Borsa İstanbul, time- and money-weighted returns in four
+units, risk with a backtest of the value at risk, and concentration with the
+deposit insurance check. It also reads Ziraat Bankası's credit card lists from
+PDF.
+
+### Card lists
+
+- **PDF files** (`ingest/pdf.py`): the text of a PDF with the position of every
+  piece. Pages that show slices of one tall drawing (a web page saved as PDF)
+  are read once. pypdf is a new dependency.
+- **The card list template** (`banks/ziraat_card.py`): every transaction block
+  with its date, description and amount; installment notes with the purchase
+  total, the installment's number and the purchase day; bill payments, the
+  card's payments and refunds. The payee is the shop without the place.
+- **Into the card's account:** the first installment of a purchase books the
+  whole purchase with its plan; later installments of a purchase whose plan
+  is in the ledger are skipped; installments of purchases made before the
+  ledger are booked one by one.
+- **Transfers seen from both sides:** `--payments-from` makes the card's
+  payments transfers from that account. A transfer the ledger already has from
+  the other account (the same two accounts, the opposite amounts, within three
+  days) is not booked again, whichever statement comes first.
+
+### Prices of funds and shares
+
+- **TEFAS** (`prices/tefas.py`): daily fund prices from the site's JSON API, up
+  to five years back, for commodities `TEFAS.<code>`.
+- **Borsa İstanbul** (`prices/yahoo.py`): daily closes from Yahoo Finance for
+  `BIST.<ticker>`. Yahoo adjusts past closes for later splits; the program turns
+  them back into each day's price, so that they match the shares held that
+  day.
+- `finance price update` fetches both (`--only tefas` or `--only yahoo`); a
+  split of a share the ledger held is reported until it is recorded.
+- `finance split ACCOUNT RATIO`: a split or bonus issue ("bedelsiz")
+  multiplies the shares through the trading account, so no value enters or
+  leaves. `finance commodity add` takes the price sources `tefas` and `yahoo`.
+
+### Returns, risk, concentration
+
+- `finance returns`: the time-weighted return (Portfolio Performance's
+  TTWROR: money in at the start of a day, out at its end) and the
+  money-weighted return (XIRR) of the portfolio and of each account, in TRY,
+  real TRY, US dollars and grams of gold. Cash flows are what crosses the
+  portfolio's boundary; interest, dividends and investment fees are return.
+- `finance risk`: volatility, the largest fall with its peak, bottom and
+  recovery, one-day value at risk and expected shortfall (historical and
+  normal), a rolling backtest with Kupiec's and Christoffersen's tests, and the
+  holdings' volatilities and correlations (split-adjusted, on the days they
+  were held).
+- `finance concentration`: the shares by holding, institution and currency,
+  the Herfindahl–Hirschman index, flags above 50 % (Ghostfolio's default),
+  and every person's deposits at every bank against the TMSF insurance limit
+  (650,000 TRY in 2024, 950,000 in 2025, 1,200,000 in 2026).
+- The portfolio is every fund, stock, gold and foreign currency account by
+  default; `--account` chooses others (a brokerage's cash account, for
+  instance).
+
+### Demo and documents
+
+- The demo household buys a made-up fund every month and a made-up share
+  every third month; the share splits two for one in the seventh month.
+- METHOD.md §22–26: card lists, fund and share prices, returns, risk,
+  concentration; with the papers of Kupiec, Christoffersen, Acerbi and Tasche,
+  and the definitions of Portfolio Performance and Ghostfolio.
+- DATA_SOURCES.md: TEFAS's new API, Yahoo's split adjustment, the layout of
+  the card list.
+- 216 tests (186 before), among them the spreadsheet function XIRR's example,
+  Kupiec's acceptance regions as tabulated by Jorion, and a made-up card list
+  PDF built like the bank's.
+
 ## 02 (2026-10-14)
 
 Pull request #4. Version 02 is the debt module: loans with their payment

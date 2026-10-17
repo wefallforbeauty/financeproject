@@ -37,11 +37,18 @@ class StatementLine:
     payee: str | None = None
     """Merchant or person, when the template can read it from the description."""
     kind: str | None = None
-    """What the template recognized: card, transfer, fee, cash, bill or loan (``None``: nothing)."""
+    """What the template recognized (``None``: nothing). Accounts: card, transfer, fee, cash, bill
+    or loan; credit cards: card, installment, bill, payment or refund."""
     loan_reference: str | None = None
     """For a loan installment: the bank's number for the loan."""
     installment: int | None = None
-    """For a loan installment: its number."""
+    """For a loan installment or a card installment: its number."""
+    installment_count: int | None = None
+    """For a card installment: the number of installments of the purchase."""
+    purchase_total: Decimal | None = None
+    """For a card installment: the amount of the whole purchase."""
+    purchase_date: date | None = None
+    """For a card installment: the day of the purchase, when the card list gives it."""
 
 
 @dataclass(frozen=True)
@@ -56,6 +63,8 @@ class Statement:
     """Sum of the money-out lines as printed by the bank (negative or zero)."""
     credit_total: Decimal | None = None
     """Sum of the money-in lines as printed by the bank."""
+    card: bool = False
+    """A credit card's list: the lines change the card's debt (spending negative, payments positive)."""
 
     @property
     def has_balances(self) -> bool:

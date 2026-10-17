@@ -12,12 +12,15 @@ month:
   pension contributions, savings in dollars and gold;
 - a consumer loan taken before the ledger starts (its terms are recorded, so
   every installment splits into principal, interest and taxes), and money
-  borrowed from a friend, paid back in monthly parts.
+  borrowed from a friend, paid back in monthly parts;
+- a fund bought every month and a share bought every third month, at made-up
+  prices; the share splits two for one in the seventh month.
 
 In the last two months a third of the card purchases stay uncategorized, as if
 imported without rules, so that ``finance categorize`` has something to learn.
 Nominal amounts grow with the CPI when it is loaded, otherwise 2.5 % a month.
-``synthetic_prices`` gives offline USD/TRY and gold prices.
+``synthetic_prices`` gives offline USD/TRY and gold prices; the fund's and the
+share's prices are always made up (``security_prices``).
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import random
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 
 from sqlalchemy.orm import Session
 
@@ -40,19 +43,26 @@ from financeproject.ledger.accounts import create_account
 from financeproject.ledger.db import UNCATEGORIZED_EXPENSE
 from financeproject.ledger.installments import record_installment_purchase, split_amount
 from financeproject.ledger.loans import add_loan, next_number, record_payment
+from financeproject.ledger.models import Commodity
 from financeproject.ledger.transactions import (
     opening_balance,
     record_exchange,
     record_expense,
     record_income,
+    record_split,
     record_transfer,
 )
+from financeproject.prices.store import upsert_price
 
 SYNTHETIC_SOURCE = "synthetic"
 CARD = "Liabilities:Credit Card:Sample Card"
 CHECKING = "Assets:Bank:Checking TRY"
 LOAN = "Liabilities:Loan:Consumer Loan"
 FRIEND = "Liabilities:Personal:Borrowed from a Friend"
+FUND, SHARE = "DEMO.FUND", "DEMO.SHARE"
+FUND_ACCOUNT, SHARE_ACCOUNT = "Assets:Investments:Demo Fund", "Assets:Investments:Demo Share"
+SPLIT_MONTH = 6
+"""The share splits in the seventh month (months counted from 0)."""
 
 ACCOUNTS = (
     # path, kind, commodity, owner, institution
@@ -66,6 +76,8 @@ ACCOUNTS = (
     (CARD, "credit_card", "TRY", "Me", "Sample Bank"),
     (LOAN, "consumer_loan", "TRY", "Me", "Sample Bank"),
     (FRIEND, "personal_debt", "TRY", "Me", None),
+    (FUND_ACCOUNT, "fund", FUND, "Me", "Sample Broker"),
+    (SHARE_ACCOUNT, "stock", SHARE, "Me", "Sample Broker"),
 )
 CATEGORIES = (
     "Expenses:Rent",
@@ -142,6 +154,23 @@ def synthetic_prices(start: date, end: date, seed: int = 7) -> list[Quote]:
     return quotes
 
 
+def security_prices(start: date, end: date, split_on: date | None, seed: int = 7) -> list[Quote]:
+    """Daily prices of the demo fund and share on weekdays; the share's price halves at its split."""
+    rng = random.Random(seed + 1)
+    quotes: list[Quote] = []
+    fund, share = 1.0, 80.0
+    d = start
+    while d <= end:
+        if d.weekday() < 5:
+            fund *= math.exp(0.0009 + rng.gauss(0, 0.006))
+            share *= math.exp(0.0007 + rng.gauss(0, 0.018))
+            raw = share / 2 if split_on and d >= split_on else share
+            quotes.append(Quote(FUND, "TRY", d, Decimal(f"{fund:.6f}"), SYNTHETIC_SOURCE))
+            quotes.append(Quote(SHARE, "TRY", d, Decimal(f"{raw:.2f}"), SYNTHETIC_SOURCE))
+        d += timedelta(days=1)
+    return quotes
+
+
 def _money(value: float) -> Decimal:
     return Decimal(str(round(value, 2))).quantize(quantum(2))
 
@@ -155,6 +184,14 @@ def build_demo(
     seed: int = 7,
 ) -> DemoSummary:
     rng = random.Random(seed)
+    session.add(Commodity(code=FUND, name="Demo fund (made up)", kind="fund", decimals=6, price_source="manual"))
+    session.add(Commodity(code=SHARE, name="Demo share (made up)", kind="stock", decimals=0, price_source="manual"))
+    session.flush()
+    split_on = add_months(month_start(start), SPLIT_MONTH) + timedelta(days=14)
+    split_on = split_on if start < split_on <= end else None
+    for q in security_prices(start - timedelta(days=7), end, split_on, seed):
+        upsert_price(session, q.commodity, q.quote, q.on, q.value, SYNTHETIC_SOURCE)
+    securities = PriceBook(security_prices(start - timedelta(days=7), end, split_on, seed))
     for path, kind, commodity, owner, institution in ACCOUNTS:
         create_account(session, path, kind=kind, commodity=commodity, owner=owner, institution=institution)
     for path in CATEGORIES:
@@ -276,6 +313,22 @@ def build_demo(
                 got = (paid / price.value).quantize(quantum(decimals))
                 record_exchange(session, CHECKING, paid, target, got, d, f"{commodity} savings")
                 count += 1
+        if due(10):
+            d = on(10)
+            paid = _money(4000 * f)
+            units = (paid / securities.resolve(FUND, d).value).quantize(quantum(6))
+            record_exchange(session, CHECKING, paid, FUND_ACCOUNT, units, d, "Monthly fund purchase")
+            count += 1
+        if index % 3 == 0 and due(12):
+            d = on(12)
+            price = securities.resolve(SHARE, d).value
+            shares = (_money(9000 * f) / price).to_integral_value(rounding=ROUND_FLOOR)
+            if shares > 0:
+                record_exchange(session, CHECKING, _money(float(shares * price)), SHARE_ACCOUNT, shares, d, "Share purchase")
+                count += 1
+        if split_on is not None and month == month_start(split_on):
+            record_split(session, SHARE_ACCOUNT, Decimal(2), split_on)
+            count += 1
         month = add_months(month, 1)
         index += 1
     return DemoSummary(start, end, count, skipped)

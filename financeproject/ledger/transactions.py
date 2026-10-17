@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
-from decimal import Decimal
+from datetime import date, timedelta
+from decimal import ROUND_FLOOR, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,6 +40,7 @@ from financeproject.ledger.models import Account, Commodity, Posting, Transactio
 
 MANUAL_SOURCE = "manual"
 OPENING_SOURCE = "opening"
+SPLIT_SOURCE = "split"
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,18 +182,23 @@ def record_expense(
     on: date,
     description: str,
     payee: str | None = None,
+    *,
+    source: str = MANUAL_SOURCE,
+    import_key: str | None = None,
 ) -> Transaction:
     _positive(amount)
     expense = find_account(session, expense_account)
     if expense.type != EXPENSE:
         raise LedgerError(f"The expense account must start with 'Expenses:': {expense.path}")
-    source = _balance_sheet_account(session, paid_from, "The account paid from")
+    paying = _balance_sheet_account(session, paid_from, "The account paid from")
     return add_transaction(
         session,
         on,
         description,
-        [Leg(expense, amount, commodity=source.commodity_code), Leg(source, -amount)],
+        [Leg(expense, amount, commodity=paying.commodity_code), Leg(paying, -amount)],
         payee=payee,
+        source=source,
+        import_key=import_key,
     )
 
 
@@ -277,6 +283,38 @@ def record_exchange(
             Leg(dst, to_amount),
         ],
         note=note,
+    )
+
+
+def record_split(session: Session, account: str | Account, ratio: Decimal, on: date) -> Transaction:
+    """A split or bonus issue on ``on``: the shares held the day before are multiplied by ``ratio``.
+
+    ``ratio`` is new shares per old share: 2 for a 100 % bonus issue, 1.25 for
+    25 %, 0.1 for a 1-for-10 reverse split. Fractions of a share are dropped.
+    The shares come from (or go to) the trading account of their commodity,
+    so no money enters or leaves: the price falls in the same proportion.
+    """
+    from financeproject.ledger.queries import account_balance
+
+    acc = _balance_sheet_account(session, account, "A split")
+    commodity = session.get(Commodity, acc.commodity_code) if acc.commodity_code else None
+    if acc.type != ASSET or commodity is None or commodity.kind == "currency":
+        raise LedgerError(f"Splits are for accounts that hold shares or fund units: {acc.path}")
+    if ratio <= 0 or ratio == 1:
+        raise LedgerError("The ratio must be positive and not 1 (new shares per old share, e.g. 2 or 2:1).")
+    held = account_balance(session, acc, on - timedelta(days=1)).get(commodity.code, Decimal(0))
+    if held <= 0:
+        raise LedgerError(f"{acc.path} holds no {commodity.code} before {on}.")
+    after = (held * ratio).quantize(Decimal(1).scaleb(-commodity.decimals), rounding=ROUND_FLOOR)
+    if after == held:
+        raise LedgerError(f"The split changes nothing at {commodity.decimals} decimals.")
+    return add_transaction(
+        session,
+        on,
+        f"Split of {commodity.code}: {ratio.normalize():f} for 1",
+        [Leg(acc, after - held), Leg(trading_account(session, commodity.code), held - after)],
+        note=f"{held.normalize():f} → {after.normalize():f}",
+        source=SPLIT_SOURCE,
     )
 
 

@@ -12,6 +12,20 @@ A statement line that pays an installment of a loan defined in the ledger
 (``finance loan add --reference``) is booked as a loan payment instead:
 principal, interest and taxes (``ledger.loans``).
 
+Credit card lists go into the card's account:
+
+- the first installment of a purchase books the whole purchase with its
+  installment plan; later installments of a purchase whose plan is in the
+  ledger are already counted and are skipped; installments of purchases made
+  before the ledger are booked one by one as they come;
+- payments of the card become transfers from the account given with
+  ``payments_from``.
+
+A row whose counter account is another balance-sheet account is a transfer.
+If the ledger already has that transfer (the same two accounts, the opposite
+amounts, within three days), for example from the other account's statement,
+the row is skipped.
+
 Every row gets an import key, so importing the same or an overlapping file
 again adds nothing twice:
 
@@ -27,28 +41,36 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from financeproject.core.kinds import ASSET
+from financeproject.core.dates import add_months, month_start
+from financeproject.core.kinds import ASSET, BALANCE_SHEET_TYPES, EXPENSE, LIABILITY
 from financeproject.core.text import fold
 from financeproject.errors import FinanceError
 from financeproject.ingest import learn
 from financeproject.ingest.rules import load_rules, match
-from financeproject.ingest.statement import Statement
+from financeproject.ingest.statement import Statement, StatementLine
 from financeproject.ledger.accounts import find_account
 from financeproject.ledger.db import UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME
+from financeproject.ledger.installments import (
+    matching_plan,
+    record_installment_purchase,
+)
 from financeproject.ledger.loans import loan_by_reference, owed, record_payment
 from financeproject.ledger.models import Account, Loan, Posting, Transaction
 from financeproject.ledger.queries import account_balance
 from financeproject.ledger.transactions import Leg, add_transaction, opening_balance
 
 HOW_FILE, HOW_UNCATEGORIZED, HOW_LOAN = "file", "uncategorized", "loan"
+HOW_INSTALLMENT, HOW_TRANSFER, HOW_PAYMENT = "installment", "transfer", "card payment"
+TRANSFER_DAYS = 3
+"""Two sides of a transfer are taken for the same transfer up to this many days apart."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +89,14 @@ class Row:
     loan_id: int | None = None
     """The loan this row pays (statement lines that name a defined loan)."""
     installment: int | None = None
+    installments: int | None = None
+    """A card purchase in this many installments: booked in full with its plan."""
+    first_due: date | None = None
+    """The month of the first installment of such a purchase."""
+    covered_by: int | None = None
+    """The transaction that already holds this row (an installment of a purchase in the ledger)."""
+    how: str = HOW_FILE
+    """How the row's own ``counter_account`` was chosen, as the preview shows it."""
 
 
 def import_key(account_path: str, row: Row, occurrence: int) -> str:
@@ -123,6 +153,8 @@ class ImportResult:
     balance_check: BalanceCheck | None = None
     unknown_loans: dict[str, int] = field(default_factory=dict)
     """Loan numbers on installment lines that no defined loan has, with their line counts."""
+    older_installments: int = 0
+    """Card installments of purchases made before the ledger, booked one by one."""
 
     @property
     def new(self) -> int:
@@ -148,6 +180,21 @@ class ImportResult:
     def loan_payments(self) -> int:
         return sum(1 for r in self.rows if not r.duplicate and r.how.startswith(HOW_LOAN))
 
+    @property
+    def installment_purchases(self) -> int:
+        """Card purchases booked in full with their installment plans."""
+        return sum(1 for r in self.rows if not r.duplicate and HOW_INSTALLMENT in r.how)
+
+    @property
+    def covered_installments(self) -> int:
+        """Card installments of purchases already in the ledger."""
+        return sum(1 for r in self.rows if r.duplicate and r.how.startswith(HOW_INSTALLMENT))
+
+    @property
+    def matched_transfers(self) -> int:
+        """Transfers the ledger already had from the other account."""
+        return sum(1 for r in self.rows if r.duplicate and r.how.startswith(HOW_TRANSFER))
+
 
 def _check_loan_row(session: Session, loan: Loan, row: Row) -> None:
     """Refuse an installment line the loan's start in the ledger cannot take."""
@@ -158,6 +205,31 @@ def _check_loan_row(session: Session, loan: Loan, row: Row) -> None:
         )
     if owed(session, loan, row.date) <= 0:
         raise FinanceError(f"{loan.name} owed nothing on {row.date}; its balance (opening or payout) must start earlier")
+
+
+def _mirror(
+    session: Session, account: Account, counter: Account, amount: Decimal, on: date, used: set[int]
+) -> int | None:
+    """A transaction already in the ledger that moves ``amount`` between the two accounts within
+    ``TRANSFER_DAYS`` of ``on`` (the closest one not in ``used``)."""
+    found = []
+    for tx in session.scalars(
+        select(Transaction)
+        .join(Posting, Posting.transaction_id == Transaction.id)
+        .where(
+            Posting.account_id == account.id,
+            Transaction.date >= on - timedelta(days=TRANSFER_DAYS),
+            Transaction.date <= on + timedelta(days=TRANSFER_DAYS),
+        )
+    ).unique():
+        legs = {(p.account_id, p.amount) for p in tx.postings}
+        if tx.id not in used and len(tx.postings) == 2 and legs == {(account.id, amount), (counter.id, -amount)}:
+            found.append(tx)
+    if not found:
+        return None
+    best = min(found, key=lambda tx: (abs((tx.date - on).days), tx.id))
+    used.add(best.id)
+    return best.id
 
 
 def import_rows(
@@ -187,8 +259,17 @@ def import_rows(
     uncategorized_income = find_account(session, UNCATEGORIZED_INCOME)
     seen: Counter[tuple] = Counter()
     pending: list[tuple[Row, Account, Account, str]] = []
+    mirrored: set[int] = set()
 
     for row in rows:
+        if row.covered_by is not None:
+            result.rows.append(
+                PreviewRow(
+                    row.line, row.date, row.description, row.amount, "TRY", default_account.path if default_account else "",
+                    "", f"{HOW_INSTALLMENT} {row.installment}/{row.installments} of #{row.covered_by}", True, row.payee,
+                )
+            )
+            continue
         try:
             acc = find_account(session, row.account) if row.account else default_account
             if acc is None:
@@ -207,7 +288,7 @@ def import_rows(
                 counter = loan.account
                 how = f"{HOW_LOAN} {loan.name}" + (f" #{row.installment}" if row.installment else "")
             elif row.counter_account:
-                counter, how = find_account(session, row.counter_account), HOW_FILE
+                counter, how = find_account(session, row.counter_account), row.how
             elif rule := match(rules, " ".join(filter(None, [row.description, row.payee]))):
                 counter, how = rule.account, f"rule #{rule.rule_id}"
             elif (
@@ -220,6 +301,13 @@ def import_rows(
             else:
                 counter = uncategorized_expense if row.amount < 0 else uncategorized_income
                 how = HOW_UNCATEGORIZED
+            if row.installments is not None:
+                if counter.type != EXPENSE:
+                    raise FinanceError(f"an installment purchase needs an expense category, not {counter.path}")
+                how += f"; {row.installments} {HOW_INSTALLMENT}s"
+            if not duplicate and row.loan_id is None and counter.type in BALANCE_SHEET_TYPES:
+                if (twin := _mirror(session, acc, counter, row.amount, row.date, mirrored)) is not None:
+                    duplicate, how = True, f"{HOW_TRANSFER} #{twin}"
             result.rows.append(
                 PreviewRow(
                     row.line, row.date, row.description, row.amount, commodity, acc.path, counter.path, how, duplicate, row.payee
@@ -255,6 +343,21 @@ def import_rows(
                         partial=True,
                     )
                     continue
+                if row.installments is not None:
+                    record_installment_purchase(
+                        session,
+                        -row.amount,
+                        counter,
+                        acc,
+                        row.date,
+                        row.description,
+                        row.installments,
+                        row.first_due,
+                        row.payee,
+                        source=transaction_source,
+                        import_key=key,
+                    )
+                    continue
                 add_transaction(
                     session,
                     row.date,
@@ -283,6 +386,21 @@ def has_postings(session: Session, account: Account) -> bool:
     return bool(session.scalar(select(func.count()).select_from(Posting).where(Posting.account_id == account.id)))
 
 
+def _card_installment(session: Session, card: Account, line: StatementLine, row: Row) -> tuple[Row, bool]:
+    """A card installment line as a row: covered by a plan in the ledger, the whole purchase with its
+    plan (first installment), or the installment alone (purchase made before the ledger)."""
+    number, count = line.installment, line.installment_count
+    purchased = line.purchase_date or add_months(line.date, -(number - 1))
+    plan = matching_plan(session, card, line.purchase_total, count, purchased)
+    if plan is not None:
+        return replace(row, installment=number, installments=count, covered_by=plan.transaction_id), False
+    if number == 1:
+        first = month_start(line.date)
+        return replace(row, date=purchased, amount=-line.purchase_total, installments=count, first_due=first), False
+    note = f"Installment {number}/{count} of a purchase of {line.purchase_total} on {purchased}"
+    return replace(row, note=note), True
+
+
 def import_statement(
     session: Session,
     statement: Statement,
@@ -293,17 +411,29 @@ def import_statement(
     add_opening: bool = False,
     use_model: bool = True,
     min_confidence: float = learn.DEFAULT_MIN_CONFIDENCE,
+    payments_from: str | Account | None = None,
 ) -> ImportResult:
-    """Import a bank statement into an asset account and compare the balances afterwards.
+    """Import a bank statement into its account and compare the balances afterwards.
 
     ``add_opening`` starts an account that has no transactions yet at the
-    balance the statement had before its first line.
+    balance the statement had before its first line. ``payments_from`` is the
+    account that pays a credit card, for the payments on a card list.
     """
     acc = find_account(session, account)
-    if acc.type != ASSET:
+    if statement.card:
+        if acc.type != LIABILITY or acc.kind != "credit_card":
+            raise FinanceError(f"A card list goes into a credit card account: {acc.path}")
+    elif acc.type != ASSET:
         raise FinanceError(f"Bank statements go into asset accounts (checking, time deposit, foreign currency): {acc.path}")
     if statement.currency and acc.commodity_code and statement.currency != acc.commodity_code:
         raise FinanceError(f"The statement is in {statement.currency} but {acc.path} holds {acc.commodity_code}.")
+    payer = None
+    if payments_from is not None:
+        if not statement.card:
+            raise FinanceError("--payments-from is for credit card lists.")
+        payer = find_account(session, payments_from)
+        if payer.type not in BALANCE_SHEET_TYPES or payer.id == acc.id:
+            raise FinanceError(f"The card is paid from another asset or liability account, not {payer.path}.")
     opening = None
     if add_opening:
         if statement.opening_balance is None:
@@ -313,24 +443,30 @@ def import_statement(
         opening = (statement.start, statement.opening_balance)
     rows = []
     unknown_loans: Counter[str] = Counter()
+    older: set[int] = set()
     for i, line in enumerate(statement.lines, start=1):
         loan = None
         if line.loan_reference and line.amount < 0:
             loan = loan_by_reference(session, line.loan_reference)
             if loan is None:
                 unknown_loans[line.loan_reference] += 1
-        rows.append(
-            Row(
-                line=i,
-                date=line.date,
-                description=line.description,
-                amount=line.amount,
-                payee=line.payee,
-                reference=line.reference,
-                loan_id=loan.id if loan else None,
-                installment=line.installment if loan else None,
-            )
+        row = Row(
+            line=i,
+            date=line.date,
+            description=line.description,
+            amount=line.amount,
+            payee=line.payee,
+            reference=line.reference,
+            loan_id=loan.id if loan else None,
+            installment=line.installment if loan else None,
         )
+        if line.kind == "installment" and line.purchase_total is not None:
+            row, is_older = _card_installment(session, acc, line, row)
+            if is_older:
+                older.add(i)
+        elif line.kind == "payment" and payer is not None and line.amount > 0:
+            row = replace(row, counter_account=payer.path, how=HOW_PAYMENT)
+        rows.append(row)
     result = import_rows(
         session,
         rows,
@@ -344,6 +480,7 @@ def import_statement(
         opening=opening,
     )
     result.unknown_loans = dict(unknown_loans)
+    result.older_installments = sum(1 for r in result.rows if not r.duplicate and r.line in older)
     if statement.closing_balance is not None and not result.errors:
         commodity = acc.commodity_code or "TRY"
         ledger = account_balance(session, acc, statement.end).get(commodity, Decimal(0))
