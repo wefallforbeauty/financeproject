@@ -2,7 +2,7 @@
 
 Which data come from where, why that source was chosen, and what to watch
 out for. Prices and the CPI as of 2026-10-09, bank statements as of
-2026-10-12.
+2026-10-12, fund and share prices and card lists as of 2026-10-17.
 
 ## In use
 
@@ -14,6 +14,8 @@ out for. Prices and the CPI as of 2026-10-09, bank statements as of
 | CPI (index) | TCMB EVDS3 `TP.TUKFIY2025.GENEL` (2025=100) | needed (free) | monthly | `prices/evds.py` |
 | CPI (changes) | TCMB "Tüketici Fiyatları" (consumer prices) page | not needed | monthly | `prices/tcmb_cpi.py` |
 | CPI (copy) | The same table, shipped with the package | — | up to 2026-09 | `financeproject/data/` |
+| Fund prices | TEFAS, the site's JSON API | not needed | business days | `prices/tefas.py` |
+| Share prices (BIST) | Yahoo Finance chart API (unofficial) | not needed | trading days | `prices/yahoo.py` |
 
 TCMB is the Central Bank of the Republic of Türkiye (CBRT); EVDS is its
 electronic data delivery system. The CPI (TÜFE in Turkish) is published by
@@ -78,6 +80,43 @@ TurkStat (TÜİK).
     bank spread are not included.
   - There is no conversion for jewelry gold or 22 carat yet.
 
+### TEFAS (funds)
+
+- **Address:** `POST https://www.tefas.gov.tr/api/funds/fonFiyatBilgiGetir`
+  with the JSON body `{"fonKodu": "AFT", "dil": "TR", "periyod": 3}`. The site
+  moved to this API in 2026; the older `/api/DB/BindHistoryInfo` endpoints now
+  answer 404.
+- **Look-back:** `periyod` is 1, 3, 6, 12, 36 or 60 months back from today, for
+  one fund at a time. Nothing older than five years.
+- **Answer:** `{"errorCode": null, "errorMessage": null, "resultList":
+  [{"fonKodu": "AFT", "fonUnvan": "…", "tarih": "2026-05-04", "fiyat":
+  1.234567, …}]}`. An unknown code returns an empty list.
+- **Price:** TRY per share, with up to six decimals, for the day in `tarih`.
+  Orders are executed at the price of a later day (the fund's rules), so a
+  purchase booked on its order day is valued with that day's price.
+- **Spacing:** requests are spaced 0.3 s apart; TEFAS has answered bursts with
+  short-lived `429`s.
+- **Codes:** a fund is the commodity `TEFAS.<code>` with the price source
+  `tefas` (`finance commodity add TEFAS.AFT "…" --kind fund --price-source tefas`).
+
+### Yahoo Finance (shares)
+
+- **Address:** `GET https://query1.finance.yahoo.com/v8/finance/chart/THYAO.IS?period1=…&period2=…&interval=1d&events=split`.
+  Free, no key, but not an official or documented service: it may change or
+  refuse requests.
+- **Answer:** the currency and the time zone offset (`meta`), the trading days
+  (`timestamp`), the closes (`indicators.quote[0].close`) and the splits
+  (`events.splits`, numerator and denominator).
+- **Splits:** the closes are adjusted for every later split, so the program
+  undoes the adjustment (METHOD §23); the request always runs to today. On
+  FROTO.IS, for example, the close of 2025-05-06 comes as 87.75 and is stored
+  as 877.50, the price of that day, because of the 10-for-1 split of
+  2025-05-07.
+- **Dividends** are not fetched: they are booked as income when they are paid.
+- **Codes:** a Borsa İstanbul share is `BIST.<ticker>` with the price source
+  `yahoo`; its Yahoo symbol is `<ticker>.IS`. Another code is taken as a Yahoo
+  symbol as it is, and its prices are stored in the currency Yahoo gives.
+
 ### TCMB CPI page
 
 The annual and monthly changes of TurkStat's CPI, from 2005-01 to today, are
@@ -130,28 +169,57 @@ statements with the same layout (`tests/fixtures/make_ziraat_samples.py`).
 - **Personal data** in the header (name, address, IBAN, account number) is not
   read; only the table, the period, the currency and the totals are.
 
+### Ziraat Bankası card lists
+
+Internet banking shows a credit card's transactions ("Kart Hareketleri") as a
+web page that can be saved as PDF. The PDF is one tall drawing; every page
+shows a slice of it, so the same text is on every page. The template is tested
+on a made-up PDF built the same way (`tests/fixtures/make_ziraat_card_sample.py`).
+
+| | |
+|---|---|
+| Block of a transaction | amount and `TL` at the right; the description below it; the day and short month (`17 Eki`) and the year at the left |
+| Order | newest first |
+| Amounts | `1.234,56`; spending without a sign, payments and refunds with `+` |
+| Installments | the month's installment; the purchase day before the description (`15/07 …`); a note `(9.450,00 TL İşlemin 1/3 Taksidi)` |
+| Other | the holder's name above the list, buttons (`TAKSİTLENDİR`, `ERTELE`) beside some lines, the bank's address below |
+| Not there | balances, totals, the period, the card number |
+
+| Kind | Description | Payee |
+|---|---|---|
+| card | the shop, then the place (province, sometimes a plate-code abbreviation before it) | the shop |
+| installment | `<dd/mm> <shop> <place>` with the note | the shop |
+| bill | `<subscriber number> [<company>] FATURA ÖDEME` | the company |
+| payment | `Ödeme - Teşekkür Ederiz -` | — |
+| refund | any other line with `+` | the shop |
+
+- Lines in another currency than TL are refused for now.
+- The list carries no balances or totals, so its lines cannot be checked
+  against them; re-importing an overlapping list adds nothing twice (the
+  import key is the date, amount and description).
+- **Personal data:** only the transaction blocks are read; the holder's name
+  is not stored.
+
 ## Tried and not chosen for now
 
 | Source | For | Why not for now |
 |---|---|---|
-| Yahoo Finance (`yfinance`, `GC=F`, `TRY=X`) | gold, rates, BIST | Unofficial. It returned `429 Too Many Requests` while testing. For gold it gives the futures price. To be looked at again for BIST in 03. |
+| Yahoo Finance (`GC=F`, `TRY=X`) | gold, rates | Unofficial, and for gold it gives the futures price. Used since 03 for BIST shares only (its chart API answered well in October 2026). |
+| TEFAS's old endpoints (`/api/DB/BindHistoryInfo`) | fund prices | Retired in 2026: `404 Method not found or disabled`. The site's own pages also reject automated requests. |
+| pdftotext (Poppler) | reading PDFs | A separate program to install on each system; pypdf is pure Python and gives the positions the template needs. |
 | Stooq (`xauusd`) | gold | The CSV download now asks for a JavaScript check. |
 | LBMA (`prices.lbma.org.uk`) | gold | Cloudflare 403. The prices are licensed by ICE. |
 | EVDS `TP.MK.KUL.YTL` | grams of gold | Archived, monthly average. |
 | Frankfurter's TCMB provider | past rates in one request | It gives the middle rate, not forex buying, and shifts dates by one day from the bulletin date. Could be an option for a fast first load. |
-| `borsapy`, `borsa-mcp` | BIST, TEFAS, gold, currencies | Broad, but they use unofficial endpoints and are for personal and educational use. To be used as a map of data sources in 03. |
+| `borsapy`, `borsa-mcp`, `tefas-crawler` | BIST, TEFAS, gold, currencies | Broad, but they use unofficial endpoints and are for personal and educational use. `tefas-crawler` showed where TEFAS's new API is; the program calls it directly. |
 | `evdspy` | EVDS | A heavy package. A thin client does the same (`prices/evds.py`). |
 | openpyxl | reading bank Excel files | Refuses Ziraat Bankası's export (an empty fill in its style sheet); python-calamine reads it. |
 | Open banking (ÖHVPS, HBHS) | bank transactions | Access is only for service providers licensed by TCMB; individuals get no API keys. That is why statements are imported. |
 
 ## Sources for later versions
 
-- **03, TEFAS fund prices:** TEFAS's own JSON endpoints or `tefas-crawler`.
-  TEFAS returns a short-lived `429` after a few requests; requests should be
-  spaced out.
-- **03, BIST stocks:** a data source is still to be chosen. Free sources are
-  usually 15 minutes delayed.
-- **03, interest rates:** the policy rate and deposit rates from EVDS, for
-  comparing real returns and as the risk-free rate.
+- **05, interest rates:** the policy rate and deposit rates from EVDS, as the
+  risk-free rate for the portfolio models and for comparing returns.
+- **Dividends:** Yahoo's dividend events could suggest the income to book.
 - **01 and 09, CPI subgroups:** the 2025=100 COICOP groups on EVDS. Needed for
   personal inflation.

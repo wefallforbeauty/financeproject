@@ -1,4 +1,4 @@
-# Method (version 02)
+# Method (version 03)
 
 This document gives the definition, formula and source of everything the
 program computes. A section is added whenever a new model is.
@@ -234,7 +234,8 @@ starts with the other person's name), the bank's fees, cash machine
 withdrawals, bill payments (the company before `Abone no`) and loan
 installments (the loan's number and the installment's number, §17). Only the
 table, the period, the currency and the totals are read. Details:
-[DATA_SOURCES.md](DATA_SOURCES.md).
+[DATA_SOURCES.md](DATA_SOURCES.md). Credit card lists, which have no balances,
+are read from PDF (§22).
 
 ## 9. Why net worth changed
 
@@ -574,11 +575,189 @@ statements about purchasing power under that assumption, not forecasts: at
 `finance debt` lists every debt this way; a card's balance also shows how much
 of it is installments billed in later months (§11).
 
+## 22. Credit card lists
+
+**Reading a PDF.** A PDF page is text placed at coordinates. `ingest/pdf.py`
+reads every piece of text with the origin of its text matrix in the drawing's
+coordinates ($x' = a x + c y + e$, $y' = b x + d y + f$ for the current
+transformation $[a\,b\,c\,d\,e\,f]$). Ziraat Bankası's internet banking prints
+a web page: one tall drawing that every PDF page shows a clipped slice of, so
+every page carries the same pieces. A page whose pieces equal an earlier
+page's is read once.
+
+**The card list** ("Kart Hareketleri", `banks/ziraat_card.py`). Each
+transaction is a block anchored on its amount: a number written `1.234,56`
+with a currency word at its right. The block reaches down to the next amount.
+Left of the amount column are the day and short month (`17 Eki`), the year,
+the description (one or more lines, pieces on the same height joined left to
+right) and, for an installment, a note `(<total> TL İşlemin <i>/<n> Taksidi)`.
+Text right of the amount (the page's buttons) and outside any block (the
+holder's name above, the bank's address below) is not read. Spending has no
+sign and becomes a negative change of the card's account; payments and
+refunds carry `+`.
+
+**Installments.** An installment line shows the month's part $a_i$ of a
+purchase of total $T$ in $n$ parts, and the purchase day before the
+description (`15/07`). The purchase month is the line's month minus $i-1$; its
+year follows from that. The ledger books a purchase in installments in full on
+its day (§11), so:
+
+- if the card has a plan with the same $T$ and $n$ bought within 7 days of the
+  purchase day, the line is already counted and is skipped;
+- otherwise, for $i = 1$ the purchase is booked in full with a plan whose first
+  installment falls in the line's month;
+- otherwise ($i > 1$, a purchase made before the ledger) the line is booked as
+  an expense of $a_i$, with a note; the following months are booked the same
+  way when their lists are imported.
+
+**Payments and transfers.** With `--payments-from` the card's payments become
+transfers from that account. A row whose counter account is another asset or
+liability account is a transfer; if the ledger already has a transaction of
+exactly two legs moving the same amount between the same two accounts within
+3 days (say, from the bank account's statement, where a rule sent the card
+payment to the card), the row is skipped. Each such transaction is matched at
+most once per import.
+
+## 23. Fund and share prices
+
+**Funds** come from TEFAS (`prices/tefas.py`): one request per fund gives its
+daily prices for 1, 3, 6, 12, 36 or 60 months back; the shortest look-back
+reaching a week before the first day needed is asked for. Prices are TRY per
+share with up to six decimals, read as decimals.
+
+**Shares** come from Yahoo Finance's chart API (`prices/yahoo.py`). Its closes
+are adjusted for later splits: after a bonus issue of 100 % every earlier close
+is halved. The ledger holds each day's number of shares, so each close is
+turned back into the price of its day:
+
+$$P_t = \tilde P_t \prod_{s:\ t_s > t} \frac{\text{numerator}_s}{\text{denominator}_s}$$
+
+over the splits $s$ after day $t$ (rounded to the kuruş for BIST). The request
+always runs to today, because the adjustment covers every split up to now.
+
+**Splits in the ledger.** `finance split` multiplies the shares held at the end
+of the day before by the ratio $k$ (new shares per old share), dropping
+fractions: $q' = \lfloor k q \rfloor$. The $q' - q$ new shares come from the
+trading account of the share (§2), so no value crosses the portfolio's
+boundary and the value stays the same while the price falls by $k$. A price
+update reports a split of a share the ledger held on that day until such a
+transaction is recorded.
+
+## 24. Returns
+
+**The portfolio** is a set of asset accounts: by default every fund, stock,
+gold and foreign currency account. Its value at the end of day $t$ is
+$V_t = \sum_{a,c} B_{a,c}(t) P_c(t)$ in TRY, every calendar day.
+
+**Cash flows** are what crosses its boundary. A transaction with a leg in the
+portfolio brings in or takes out
+$F = -\sum_{p \notin \text{portfolio}} x_p P_{c_p}(t)$ over its other legs,
+except the trading accounts (the units exchanged, §2) and the income and
+expenses of the investments themselves (`Income:Interest`,
+`Income:Dividends`, `Income:Investments`, `Expenses:Investments`), which are
+return. Buying a fund with money from the bank is an inflow, a dividend paid
+into a portfolio account is return, spending from a foreign currency account
+is an outflow. A day's inflows $CF^{in}_t$ and outflows $CF^{out}_t$ are summed
+separately.
+
+**Time-weighted return.** As in Portfolio Performance's "true time-weighted
+rate of return", inflows count at the start of the day and outflows at its
+end:
+
+$$1 + r_t = \frac{V_t + CF^{out}_t}{V_{t-1} + CF^{in}_t},\qquad \mathrm{TWR} = \prod_t (1 + r_t) - 1,\qquad \text{a year: } (1+\mathrm{TWR})^{365/D} - 1$$
+
+over the $D$ days of the period. It measures the investments whatever was
+added or taken out. With daily values the money bought during a day earns
+that whole day's change: a purchase at the day's price counts as if made at
+the previous close.
+
+**Money-weighted return** (XIRR): the yearly rate $X$ with
+
+$$-V_0 - \sum_t CF^{in}_t (1+X)^{-\tau_t} + \sum_t CF^{out}_t (1+X)^{-\tau_t} + V_D (1+X)^{-\tau_D} = 0,\qquad \tau_t = \frac{t - t_0}{365}$$
+
+solved by bisection. It measures the investor's money and depends on when it
+went in. On the example of the spreadsheet function XIRR the program gives
+37.336 %.
+
+**Units.** Every $V_t$ and flow is converted at its own day's rate: real TRY
+by the CPI factor of §5.4, US dollars by USD/TRY, grams of gold by the TRY
+price of a gram. The same formulas then give the return in that unit: the TWR
+in real TRY is the return after inflation, in gold it is the return against
+holding gold.
+
+## 25. Risk
+
+The portfolio's returns are taken on **market days**, the days with a price of
+something it holds (or of the dollar a holding is priced through); the
+calendar days in between fold into the next market day. All in TRY.
+
+- **Volatility:** $\sigma = s(\ln(1+r)) \sqrt{252}$, the sample standard
+  deviation of daily log returns for about 252 trading days a year.
+- **Maximum drawdown:** with the growth index $I_t = \prod_{u \le t}(1+r_u)$,
+  $\max_t \left(1 - I_t / \max_{u \le t} I_u\right)$ with the day of the peak,
+  the bottom, and the first day back at the peak, if any (Magdon-Ismail &
+  Atiya 2004).
+- **Value at risk** at level $\alpha$ (95 %, 99 %), one day. Historical: with
+  the returns sorted $r_{(1)} \le \dots \le r_{(n)}$ and
+  $k = \lceil n(1-\alpha) \rceil$, $\mathrm{VaR} = -r_{(k)}$ and the expected
+  shortfall $\mathrm{ES} = -\tfrac{1}{k}\sum_{j \le k} r_{(j)}$, the mean loss
+  of the worst days (Acerbi & Tasche 2002). Normal: with the mean $\mu$ and
+  standard deviation $\sigma$ of the returns and $z = \Phi^{-1}(\alpha)$,
+  $\mathrm{VaR} = z\sigma - \mu$ and $\mathrm{ES} = \sigma\,\varphi(z)/(1-\alpha) - \mu$.
+  In TRY: times the portfolio's last value.
+- **Backtest:** each day's historical VaR from the 250 market days before it is
+  compared with that day's return; a loss beyond it is an exception $h_t = 1$.
+  Kupiec's (1995) test of the share of exceptions, $x$ of $n$ against
+  $p = 1 - \alpha$:
+
+  $$LR_{POF} = -2\ln\frac{(1-p)^{n-x} p^x}{(1-x/n)^{n-x} (x/n)^x} \sim \chi^2_1$$
+
+  It reproduces the acceptance regions tabulated by Jorion (2007) for 255
+  days: at 99 % fewer than 7 exceptions; at 95 % between 7 and 20.
+  Christoffersen's (1998) test of independence uses the counts $n_{ij}$ of
+  day pairs going from state $i$ to $j$, $\pi_{01} = n_{01}/(n_{00}+n_{01})$,
+  $\pi_{11} = n_{11}/(n_{10}+n_{11})$ and $\pi = (n_{01}+n_{11})/\sum n_{ij}$:
+
+  $$LR_{ind} = -2\ln\frac{(1-\pi)^{n_{00}+n_{10}}\pi^{n_{01}+n_{11}}}{(1-\pi_{01})^{n_{00}}\pi_{01}^{n_{01}}(1-\pi_{11})^{n_{10}}\pi_{11}^{n_{11}}} \sim \chi^2_1,\qquad LR_{cc} = LR_{POF} + LR_{ind} \sim \chi^2_2$$
+
+  The p-values are $\operatorname{erfc}(\sqrt{LR/2})$ for one degree of
+  freedom and $e^{-LR/2}$ for two. A p-value under 5 % says the VaR had too
+  many (or too few) exceptions, or that they came in clusters.
+- **Holdings:** each holding's volatility, largest fall and correlation with the
+  portfolio use its prices on the market days it was held, in the units after
+  the recorded splits (a price before a 2-for-1 split is halved), so that a
+  split is not a fall. Correlations are Pearson's, between daily log returns on
+  the days both are known.
+
+## 26. Concentration
+
+`finance concentration` looks at the financial assets (liquidity tiers 0–2,
+§6), or at the accounts given:
+
+- the shares $s_i$ by holding (commodity), by institution and by currency (a
+  fund or share counts in the currency it is priced in);
+- the Herfindahl–Hirschman index $H = \sum_i s_i^2$ over the holdings and the
+  effective number of holdings $1/H$ (Hirschman 1964): 0.25 is as spread as
+  four equal holdings;
+- a flag when one investment (not a currency), one institution or one currency
+  holds more than 50 % (`--threshold`), the default of Ghostfolio's X-ray
+  rules for accounts and currencies;
+- every person's deposits at every bank (checking, time deposit, foreign
+  currency and gold accounts with a bank set), against the deposit insurance
+  of the TMSF, per person and bank, principal and interest together:
+  650,000 TRY in 2024, 950,000 in 2025, 1,200,000 in 2026. The limit is
+  raised every year by the revaluation rate; `--insured-limit` gives another.
+  A joint account's insurance is shared among its holders, which the ledger
+  does not know.
+
 ## References
 
+- Acerbi, C., & Tasche, D. (2002). On the coherence of expected shortfall. *Journal of Banking & Finance*, 26(7), 1487–1503.
 - Amar, M., Ariely, D., Ayal, S., Cryder, C. E., & Rick, S. I. (2011). Winning the battle but losing the war: The psychology of debt management. *Journal of Marketing Research*, 48(SPL), S38–S50.
+- Bacon, C. R. (2008). *Practical Portfolio Performance Measurement and Attribution* (2nd ed.). Wiley.
 - Brown, A. L., & Lahey, J. N. (2015). Small victories: Creating intrinsic motivation in task completion and debt repayment. *Journal of Marketing Research*, 52(6), 768–783.
 - Campbell, J. Y. (2006). Household finance. *Journal of Finance*, 61(4), 1553–1604.
+- Christoffersen, P. F. (1998). Evaluating interval forecasts. *International Economic Review*, 39(4), 841–862.
 - Dawid, A. P. (1984). Present position and potential developments: Some personal views. Statistical theory: The prequential approach. *Journal of the Royal Statistical Society, Series A*, 147(2), 278–292.
 - DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy? *Review of Financial Studies*, 22(5), 1915–1953.
 - DeVaney, S. A. (1994). The usefulness of financial ratios as predictors of household insolvency: Two perspectives. *Financial Counseling and Planning*, 5, 5–24.
@@ -587,19 +766,27 @@ of it is installments billed in later months (§11).
 - European Parliament and Council (2008). Directive 2008/48/EC on credit agreements for consumers, Annex I: calculation of the annual percentage rate of charge.
 - Fisher, I. (1930). *The Theory of Interest*. New York: Macmillan.
 - Gal, D., & McShane, B. B. (2012). Can small victories help win the war? Evidence from consumer debt management. *Journal of Marketing Research*, 49(4), 487–501.
-- Gümrük ve Ticaret Bakanlığı (2015). Tüketici Kredisi Sözleşmeleri Yönetmeliği. *Resmî Gazete* 29363, 22 May 2015 (the annual cost rate).
+- Ghostfolio. X-ray rule settings (default thresholds). https://github.com/ghostfolio/ghostfolio/blob/main/apps/api/src/models/rules/rule-settings.ts
 - Greninger, S. A., Hampton, V. L., Kitt, K. A., & Achacoso, J. A. (1996). Ratios and benchmarks for measuring the financial well-being of families and individuals. *Financial Services Review*, 5(1), 57–70.
+- Gümrük ve Ticaret Bakanlığı (2015). Tüketici Kredisi Sözleşmeleri Yönetmeliği. *Resmî Gazete* 29363, 22 May 2015 (the annual cost rate).
+- Hirschman, A. O. (1964). The paternity of an index. *American Economic Review*, 54(5), 761.
 - IFRS Foundation. IAS 7 *Statement of Cash Flows* (classification into operating, investing and financing activities; §28, the effect of exchange rate changes on cash).
+- Jorion, P. (2007). *Value at Risk: The New Benchmark for Managing Financial Risk* (3rd ed.). McGraw-Hill.
 - Juster, F. T., Lupton, J. P., Smith, J. P., & Stafford, F. (2006). The decline in household saving and the wealth effect. *Review of Economics and Statistics*, 88(1), 20–27.
 - Kellison, S. G. (2009). *The Theory of Interest* (3rd ed.). McGraw-Hill/Irwin.
+- Kupiec, P. H. (1995). Techniques for verifying the accuracy of risk measurement models. *Journal of Derivatives*, 3(2), 73–84.
 - Lytton, R. H., Garman, E. T., & Porter, N. M. (1991). How to use financial ratios when advising clients. *Financial Counseling and Planning*, 2, 3–23.
+- Magdon-Ismail, M., & Atiya, A. F. (2004). Maximum drawdown. *Risk*, 17(10), 99–102.
 - Manning, C. D., Raghavan, P., & Schütze, H. (2008). *Introduction to Information Retrieval*, chapter 13: Text classification and naive Bayes. Cambridge University Press.
 - McCallum, A., & Nigam, K. (1998). A comparison of event models for naive Bayes text classification. *AAAI-98 Workshop on Learning for Text Categorization*.
 - Michaud, R. O. (1989). The Markowitz optimization enigma: Is "optimized" optimal? *Financial Analysts Journal*, 45(1), 31–42.
+- Microsoft. XIRR function (the worked example). https://support.microsoft.com/en-us/office/xirr-function-de1242ec-6477-445b-b11b-a303ad9adc9d
+- Portfolio Performance. Time-weighted rate of return (TTWROR). https://help.portfolio-performance.info/en/concepts/performance/time-weighted
 - Schmidt, M. (2008). The Sankey diagram in energy and material flow management, Part I: History. *Journal of Industrial Ecology*, 12(1), 82–94.
 - Selinger, P. *Tutorial on multiple currency accounting*. https://www.mathstat.dal.ca/~selinger/accounting/tutorial.html
+- Tasarruf Mevduatı Sigorta Fonu (TMSF). Decisions of the Fund Board on the insured amount of deposits and participation funds, for 2025 and 2026 (Resmî Gazete, December 2024 and December 2025).
 - Türkiye İş Bankası. Yıllık maliyet oranının hesaplanması (a note with a worked example). https://www.isbank.com.tr/bankamizi-taniyin/Documents/hakkimizda/yillik-maliyet-orani-hesaplanmasi.pdf
 - TurkStat (TÜİK). Announcements on the move of the CPI to base year 2025=100 (2025–2026).
-- United Nations, European Commission, IMF, OECD, & World Bank (2009). *System of National Accounts 2008*, chapter 12: Other changes in assets (the revaluation account; nominal, neutral and real holding gains).
 - U.S. Department of the Treasury. 31 CFR Part 356, Appendix B (the reference CPI of inflation-indexed securities).
+- United Nations, European Commission, IMF, OECD, & World Bank (2009). *System of National Accounts 2008*, chapter 12: Other changes in assets (the revaluation account; nominal, neutral and real holding gains).
 - Zadrozny, B., & Elkan, C. (2001). Obtaining calibrated probability estimates from decision trees and naive Bayesian classifiers. *Proceedings of the 18th International Conference on Machine Learning*, 609–616.
