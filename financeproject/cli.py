@@ -304,6 +304,7 @@ def commodity_list(ctx: typer.Context) -> None:
 
 
 COMMODITY_KINDS = ("currency", "gold", "fund", "stock", "other")
+PRICE_SOURCES = ("tcmb", "tefas", "yahoo", MANUAL)
 
 
 @commodity_app.command("add")
@@ -314,16 +315,26 @@ def commodity_add(
     name: Annotated[str, typer.Argument(help="Display name")],
     kind: Annotated[str, typer.Option(help=", ".join(COMMODITY_KINDS))] = "other",
     decimals: Annotated[int, typer.Option(help="Decimal places of quantities")] = 6,
-    price_source: Annotated[str, typer.Option(help="tcmb (currencies published by TCMB) or manual")] = MANUAL,
+    price_source: Annotated[
+        str,
+        typer.Option(help="tcmb (currencies published by TCMB), tefas (funds), yahoo (BIST shares) or manual"),
+    ] = MANUAL,
 ) -> None:
-    """Add a commodity. For a currency published by TCMB: --kind currency --price-source tcmb --decimals 2."""
+    """Add a commodity.
+
+    A currency published by TCMB: --kind currency --price-source tcmb --decimals 2.
+    A fund: TEFAS.<fund code> --kind fund --price-source tefas. A share of
+    Borsa İstanbul: BIST.<ticker> --kind stock --price-source yahoo --decimals 0.
+    """
     import re
 
     code = code.strip().upper()
     if not re.fullmatch(r"[A-Z][A-Z0-9_.-]{0,31}", code):
         raise FinanceError("A code starts with a letter and has letters, digits, '_', '.' or '-' (at most 32).")
     _check_choice(kind, COMMODITY_KINDS, "--kind")
-    _check_choice(price_source, ("tcmb", MANUAL), "--price-source")
+    _check_choice(price_source, PRICE_SOURCES, "--price-source")
+    if price_source == "tefas" and not re.fullmatch(r"TEFAS\.[A-Z0-9]{2,6}", code):
+        raise FinanceError("A TEFAS fund is written TEFAS.<fund code>, for example TEFAS.AFT.")
     if not 0 <= decimals <= 8:
         raise FinanceError("--decimals must be between 0 and 8.")
     with ledger(ctx) as s:
@@ -602,6 +613,33 @@ def exchange(
     with ledger(ctx) as s:
         tx = record_exchange(s, from_, amount(paid), to, amount(received), day(on), description)
         console.print(f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)} — {tx.note}")
+
+
+def _ratio(text: str) -> Decimal:
+    """'2', '2:1', '3:2' or '1,25' → new shares per old share."""
+    new, sep, old = text.partition(":")
+    value = amount(new) / amount(old) if sep else amount(new)
+    if value <= 0:
+        raise FinanceError("The ratio must be positive.")
+    return value
+
+
+@app.command()
+@guarded
+def split(
+    ctx: typer.Context,
+    account: Annotated[str, typer.Argument(help="The account that holds the shares or fund units")],
+    ratio: Annotated[
+        str, typer.Argument(help="New shares per old share: 2 (or 2:1) for a 100 % bonus issue, 1.25 for 25 %")
+    ],
+    on: Annotated[Optional[str], typer.Option("--date", help="The day the new shares count from (default: today)")] = None,
+) -> None:
+    """A split or bonus issue ("bedelsiz"): the shares held are multiplied; their value stays the same."""
+    from financeproject.ledger.transactions import record_split
+
+    with ledger(ctx) as s:
+        tx = record_split(s, account, _ratio(ratio), day(on))
+        console.print(f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)}: {tx.note}")
 
 
 def _parse_leg(text: str) -> Leg:
@@ -935,9 +973,10 @@ def price_update(
     ctx: typer.Context,
     start: Annotated[Optional[str], typer.Option(help="Default: the first transaction date (or 30 days ago)")] = None,
     end: Annotated[Optional[str], typer.Option(help="Default: today")] = None,
-    only: Annotated[Optional[str], typer.Option(help="fx, gold or cpi")] = None,
+    only: Annotated[Optional[str], typer.Option(help="fx, gold, cpi, tefas or yahoo")] = None,
 ) -> None:
-    """Download TCMB exchange rates, gold (Frankfurter) and the CPI; fills in missing days."""
+    """Download TCMB exchange rates, gold (Frankfurter), the CPI, fund prices (TEFAS) and share prices
+    (Yahoo Finance); fills in missing days."""
     from financeproject.prices.http import make_client
     from financeproject.prices.update import (
         UpdateReport,
@@ -945,10 +984,12 @@ def price_update(
         update_cpi,
         update_fx,
         update_gold,
+        update_tefas,
+        update_yahoo,
     )
 
     if only is not None:
-        _check_choice(only, ("fx", "gold", "cpi"), "--only")
+        _check_choice(only, ("fx", "gold", "cpi", "tefas", "yahoo"), "--only")
     today = date.today()
     key = config.evds_api_key()
     with ledger(ctx) as s:
@@ -968,6 +1009,12 @@ def price_update(
             if only in (None, "cpi"):
                 progress.update("CPI")
                 report.merge(update_cpi(s, client, key, today))
+                s.commit()
+            if only in (None, "tefas"):
+                report.merge(update_tefas(s, client, start_day, end_day, today, progress=progress.update))
+                s.commit()
+            if only in (None, "yahoo"):
+                report.merge(update_yahoo(s, client, start_day, end_day, today, progress=progress.update))
                 s.commit()
     for line in report.messages:
         console.print(f"  {line}")
@@ -2364,6 +2411,206 @@ def debt(
         "[dim]Rate a month: contractual, without KKDF and BSMV. Cost a year: annual cost rate of the terms. "
         "Real a year: interest and taxes compounded, after inflation.[/]"
     )
+
+
+# --------------------------------------------------------------------------- 03: investments
+
+PortfolioOption = Annotated[
+    Optional[list[str]],
+    typer.Option(
+        "--account",
+        help="Accounts of the portfolio: a path and everything under it, or a name (repeatable). "
+        "Default: every fund, stock, gold and foreign currency account",
+    ),
+]
+
+
+def _unit_amount(value: float, unit: str) -> str:
+    return money(value, 3 if unit.startswith("gold") else 2)
+
+
+def _print_accounts(paths: tuple[str, ...]) -> None:
+    shown = ", ".join(escape(p) for p in paths[:6]) + (f" and {len(paths) - 6} more" if len(paths) > 6 else "")
+    console.print(f"[dim]Accounts: {shown}[/]")
+
+
+@app.command()
+@guarded
+def returns(
+    ctx: typer.Context,
+    start: Annotated[Optional[str], typer.Option(help="First day (default: the portfolio's first transaction)")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last day (default: today)")] = None,
+    account: PortfolioOption = None,
+) -> None:
+    """Returns of the investments: time-weighted and money-weighted, in TRY, real TRY, US dollars and gold."""
+    from financeproject.reports.investments import UNITS, returns_report
+
+    with ledger(ctx) as s:
+        report = returns_report(s, parse_date(start) if start else None, parse_date(end) if end else None, account)
+    console.print(f"[bold]Investments[/] · {report.start} – {report.end} ({report.days} days)")
+    _print_accounts(report.accounts)
+    t = table("Unit", "Start>", "Money in>", "Money out>", "End>", "Gain>", "Time-weighted>", "a year>", "Money-weighted a year>")
+    for r in report.units:
+        label = r.name
+        if r.name == "real TRY" and report.base_month:
+            label = f"real TRY ({report.base_month:%Y-%m} prices)"
+        t.add_row(
+            label, _unit_amount(r.start_value, r.name), _unit_amount(r.inflows, r.name), _unit_amount(r.outflows, r.name),
+            _unit_amount(r.end_value, r.name), _unit_amount(r.gain, r.name), _pct(r.twr, 2), _pct(r.twr_year, 2),
+            _pct(r.money_weighted, 2),
+        )
+    console.print(t)
+    if report.by_account:
+        t = table("Account (TRY)", "Start>", "Money in>", "Money out>", "End>", "Gain>", "Time-weighted>", "a year>", "Money-weighted a year>")
+        for r in report.by_account:
+            t.add_row(
+                escape(r.name), money(r.start_value), money(r.inflows), money(r.outflows), money(r.end_value), money(r.gain),
+                _pct(r.twr, 2), _pct(r.twr_year, 2), _pct(r.money_weighted, 2),
+            )
+        console.print(t)
+    missing = [u for u in UNITS if u not in {r.name for r in report.units}]
+    if missing:
+        console.print(f"[yellow]Not shown: {', '.join(missing)} (no price for every day; run 'finance price update').[/]")
+    if report.days < 365:
+        console.print("[dim]'a year' extends a period shorter than a year; read it with care.[/]")
+    if report.cpi_extrapolated:
+        console.print("[dim]Real TRY: the CPI after its last published month is not known yet; prices are held at that month's level.[/]")
+    console.print(
+        "[dim]Time-weighted: what the investments earned, whatever was added or taken out (Portfolio Performance's "
+        "TTWROR). Money-weighted: the yearly rate earned on the money put in (XIRR).[/]"
+    )
+
+
+def _verdict(b) -> str:
+    if b.kupiec_p < 0.05:
+        return "too many exceptions" if b.exceptions > b.expected else "too few exceptions"
+    if b.independence_p is not None and b.independence_p < 0.05:
+        return "exceptions cluster"
+    return "fits"
+
+
+@app.command()
+@guarded
+def risk(
+    ctx: typer.Context,
+    start: Annotated[Optional[str], typer.Option(help="First day (default: the portfolio's first transaction)")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last day (default: today)")] = None,
+    account: PortfolioOption = None,
+    window: Annotated[int, typer.Option(help="Days of history behind each day's value at risk in the backtest")] = 250,
+) -> None:
+    """Risk of the investments: volatility, largest fall, value at risk (with a backtest) and correlations."""
+    from financeproject.reports.investments import risk_report
+
+    if window < 20:
+        raise FinanceError("--window must be at least 20 days.")
+    with ledger(ctx) as s:
+        report = risk_report(s, parse_date(start) if start else None, parse_date(end) if end else None, account, window=window)
+    days = len(report.returns)
+    console.print(f"[bold]Risk[/] · {report.start} – {report.end} · {days} market days · value {money(report.value)} TRY")
+    _print_accounts(report.accounts)
+    if days < 20:
+        console.print(f"[yellow]Only {days} market days: too few for risk figures.[/]")
+        return
+    console.print(f"Volatility a year: {_pct(report.volatility, 1)}")
+    dd = report.drawdown
+    if dd is None:
+        console.print("Largest fall: none, the portfolio never fell below an earlier peak.")
+    else:
+        back = f"back on {dd.recovered}" if dd.recovered else "not back yet"
+        console.print(
+            f"Largest fall: {_pct(dd.depth, 1)} from the peak of {dd.peak} to {dd.bottom}; {back} ({dd.days(report.end)} days)"
+        )
+    t = table("One day at", "VaR>", "TRY>", "Expected shortfall>", "TRY>", "Normal VaR>", "Normal shortfall>")
+    for h, n in zip(report.historical, report.normal):
+        t.add_row(
+            _pct(h.level, 0), _pct(h.var, 2), money(h.var * report.value), _pct(h.cvar, 2), money(h.cvar * report.value),
+            _pct(n.var, 2), _pct(n.cvar, 2),
+        )
+    console.print(t)
+    if report.backtests:
+        t = table("Backtest", "Days>", "Exceptions>", "Expected>", "Kupiec p>", "Independence p>", "Both p>", "Verdict")
+        for b in report.backtests:
+            t.add_row(
+                _pct(b.level, 0), str(b.days), str(b.exceptions), f"{b.expected:.1f}", f"{b.kupiec_p:.3f}",
+                "—" if b.independence_p is None else f"{b.independence_p:.3f}",
+                "—" if b.combined_p is None else f"{b.combined_p:.3f}", _verdict(b),
+            )
+        console.print(t)
+        console.print(f"[dim]Each day's historical VaR from the {report.window} days before it, against that day's return.[/]")
+    else:
+        console.print(f"[dim]Backtest: needs more than {report.window} market days (--window sets the history used).[/]")
+    if report.holdings:
+        t = table("Holding", "Volatility a year>", "Largest fall>", "Correlation with the portfolio>")
+        for h in report.holdings:
+            t.add_row(
+                escape(h.commodity), _pct(h.volatility, 1), _pct(h.drawdown.depth, 1) if h.drawdown else "—",
+                "—" if h.correlation is None else f"{h.correlation:.2f}",
+            )
+        console.print(t)
+    if report.correlations:
+        t = table("Correlation", "", ">")
+        for (a, b), c in sorted(report.correlations.items()):
+            t.add_row(escape(a), escape(b), "—" if c is None else f"{c:.2f}")
+        console.print(t)
+    console.print(
+        "[dim]Returns on market days in TRY. VaR: the loss of one day exceeded on 5 % (1 %) of days; expected shortfall: "
+        "the mean loss on those days. Normal: the same from the returns' mean and spread.[/]"
+    )
+
+
+@app.command()
+@guarded
+def concentration(
+    ctx: typer.Context,
+    on: DateOption = None,
+    account: Annotated[
+        Optional[list[str]],
+        typer.Option("--account", help="Accounts to look at (repeatable). Default: every financial asset (tiers 0–2)"),
+    ] = None,
+    threshold: Annotated[float, typer.Option(help="Share (per cent) above which one holding, bank or currency is flagged")] = 50,
+    insured_limit: Annotated[
+        Optional[str], typer.Option(help="Deposit insurance per person and bank, TRY (default: the TMSF limit of the year)")
+    ] = None,
+) -> None:
+    """Where the money is: shares by holding, bank and currency, and deposits against the insurance limit."""
+    from financeproject.reports.investments import concentration_report
+
+    if not 0 < threshold < 100:
+        raise FinanceError("--threshold is a share between 0 and 100.")
+    at = day(on)
+    with ledger(ctx) as s:
+        report = concentration_report(
+            s, at, account, threshold=threshold / 100, limit=amount(insured_limit) if insured_limit else None
+        )
+    console.print(f"[bold]Concentration[/] · {at} · {money(report.total)} TRY in {len(report.accounts)} accounts")
+    for title, shares in (("Holding", report.by_holding), ("Institution", report.by_institution), ("Currency", report.by_currency)):
+        t = table(title, "TRY>", "Share>")
+        for sh in shares:
+            t.add_row(escape(sh.name), money(sh.value), _pct(sh.share, 1))
+        console.print(t)
+    if report.effective_holdings:
+        console.print(
+            f"Herfindahl–Hirschman index {report.hhi:.3f}: as spread as {report.effective_holdings:.1f} equal holdings."
+        )
+    flags = report.flags()
+    if flags:
+        for f in flags:
+            console.print(f"[yellow]• {escape(f)}[/]")
+    else:
+        console.print(f"[green]No holding, institution or currency is over {threshold:.0f} %, and no deposits are over the insured limit.[/]")
+    if report.deposits:
+        source = "given" if insured_limit else f"TMSF, {report.limit_year}"
+        t = table("Owner", "Bank", "Deposits>", "Insured>", "Over>")
+        for d in report.deposits:
+            t.add_row(escape(d.owner), escape(d.institution), money(d.value), money(min(d.value, d.limit)), money(d.over))
+        console.print(f"Deposit insurance: {money(report.limit, 0)} TRY per person and bank ({source})")
+        console.print(t)
+        if report.limit_year != at.year and not insured_limit:
+            console.print(f"[yellow]The program knows the TMSF limit up to {report.limit_year}; give this year's with --insured-limit.[/]")
+        console.print("[dim]Deposits: checking, time deposit, foreign currency and gold accounts with a bank set. A joint account's "
+                      "insurance is shared by its holders; the ledger counts it for its owner (or 'shared').[/]")
+    if report.missing:
+        console.print(f"[yellow]Left out (no price): {', '.join(escape(m) for m in report.missing)}[/]")
 
 
 def main() -> None:

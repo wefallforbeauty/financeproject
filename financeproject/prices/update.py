@@ -5,6 +5,13 @@
 - Gold: Frankfurter XAU/USD in yearly chunks, stored per gram in USD.
 - CPI: EVDS ``TP.TUKFIY2025.GENEL`` with a key, otherwise the TCMB table.
   A snapshot of the table ships with the package so real TRY works offline.
+- Funds: TEFAS, one request per fund (price source ``tefas``).
+- Shares: Yahoo Finance, one request per share (price source ``yahoo``), with
+  a warning when a split happened while the ledger held the share and no
+  ``finance split`` was recorded for it.
+
+Funds and shares are fetched from the start date, or from a week before the
+last stored price when the start is already covered.
 """
 
 from __future__ import annotations
@@ -18,14 +25,15 @@ from decimal import Decimal
 from importlib import resources
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from financeproject.core.dates import business_days, parse_month
 from financeproject.core.inflation import chain_index
 from financeproject.errors import EvdsKeyError, SourceError
-from financeproject.ledger.models import Account, Commodity, Posting
-from financeproject.prices import evds, frankfurter, tcmb, tcmb_cpi
+from financeproject.ledger.models import Account, Commodity, Posting, Price, Transaction
+from financeproject.ledger.transactions import SPLIT_SOURCE
+from financeproject.prices import evds, frankfurter, tcmb, tcmb_cpi, tefas, yahoo
 from financeproject.prices.store import (
     ADDED,
     CPI,
@@ -205,4 +213,126 @@ def update_cpi(session: Session, client: httpx.Client, api_key: str | None = Non
     changes = tcmb_cpi.fetch_cpi_table(client)
     _store_cpi(session, cpi_from_changes(changes), "tcmb-table", report)
     report.messages.append(f"CPI (TCMB table, chained): {changes[0].month:%Y-%m} – {changes[-1].month:%Y-%m}")
+    return report
+
+
+REFRESH_DAYS = 7
+
+
+def priced_by(session: Session, source: str) -> list[str]:
+    """Commodities whose prices come from ``source``."""
+    return list(session.scalars(select(Commodity.code).where(Commodity.price_source == source).order_by(Commodity.code)))
+
+
+def _fetch_from(session: Session, code: str, source: str, start: date) -> date:
+    """``start``, or a week before the last stored price when ``start`` is already covered."""
+    first, last = session.execute(
+        select(func.min(Price.date), func.max(Price.date)).where(Price.commodity_code == code, Price.source == source)
+    ).one()
+    if first is None or start < first:
+        return start
+    return max(start, last - timedelta(days=REFRESH_DAYS))
+
+
+def update_tefas(
+    session: Session,
+    client: httpx.Client,
+    start: date,
+    end: date,
+    today: date | None = None,
+    pause: float = 0.3,
+    progress: Progress | None = None,
+) -> UpdateReport:
+    report = UpdateReport()
+    today = today or date.today()
+    codes = priced_by(session, "tefas")
+    for i, code in enumerate(codes):
+        if pause and i:
+            time.sleep(pause)
+        fund = tefas.fund_code(code)
+        if progress:
+            progress(f"TEFAS {fund}")
+        since = _fetch_from(session, code, "tefas", start)
+        oldest = tefas.months_back(today, tefas.PERIODS[-1])
+        if since < oldest:
+            report.warnings.append(f"TEFAS gives five years of prices: {code} gets none before {oldest}.")
+        try:
+            rows = tefas.fetch_fund_prices(client, fund, since, today)
+        except SourceError as exc:
+            report.warnings.append(f"{code}: {exc}")
+            continue
+        if not rows:
+            report.warnings.append(f"TEFAS has no prices for {fund} since {since}; is the fund code right?")
+        for day, price in rows:
+            if day <= end:
+                report.count(upsert_price(session, code, "TRY", day, price, "tefas"))
+    if codes:
+        report.messages.append(f"Funds (TEFAS): {', '.join(codes)}")
+    return report
+
+
+def _held_on(session: Session, code: str, on: date) -> bool:
+    """True if asset accounts held some of ``code`` at the end of the day before ``on``."""
+    amounts = session.scalars(
+        select(Posting.amount)
+        .join(Transaction)
+        .join(Account, Account.id == Posting.account_id)
+        .where(Posting.commodity_code == code, Transaction.date < on, Account.type == "asset")
+    )
+    return sum(amounts, Decimal(0)) != 0
+
+
+def _split_recorded(session: Session, code: str, on: date) -> bool:
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(Transaction)
+            .join(Posting)
+            .where(
+                Transaction.source == SPLIT_SOURCE,
+                Posting.commodity_code == code,
+                Transaction.date >= on - timedelta(days=REFRESH_DAYS),
+                Transaction.date <= on + timedelta(days=REFRESH_DAYS),
+            )
+        )
+        > 0
+    )
+
+
+def update_yahoo(
+    session: Session,
+    client: httpx.Client,
+    start: date,
+    end: date,
+    today: date | None = None,
+    pause: float = 0.3,
+    progress: Progress | None = None,
+) -> UpdateReport:
+    report = UpdateReport()
+    codes = priced_by(session, "yahoo")
+    for i, code in enumerate(codes):
+        if pause and i:
+            time.sleep(pause)
+        symbol = yahoo.symbol_of(code)
+        if progress:
+            progress(f"Yahoo {symbol}")
+        since = _fetch_from(session, code, "yahoo", start)
+        try:
+            chart = yahoo.fetch_chart(client, symbol, since, end, today)
+        except SourceError as exc:
+            report.warnings.append(f"{code}: {exc}")
+            continue
+        if session.get(Commodity, chart.currency) is None:
+            report.warnings.append(f"{code} is quoted in {chart.currency}, which is not a commodity of the ledger.")
+            continue
+        for day, price in chart.prices:
+            report.count(upsert_price(session, code, chart.currency, day, price, "yahoo"))
+        for split in chart.splits:
+            if split.on >= since and _held_on(session, code, split.on) and not _split_recorded(session, code, split.on):
+                report.warnings.append(
+                    f"{code}: a {split.ratio.normalize():f}-for-1 split on {split.on}. If the ledger still has the old "
+                    f"number of shares, record the new ones: finance split ACCOUNT {split.ratio.normalize():f} --date {split.on}"
+                )
+    if codes:
+        report.messages.append(f"Shares (Yahoo Finance): {', '.join(codes)}")
     return report

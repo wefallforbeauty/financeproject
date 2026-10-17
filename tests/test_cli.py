@@ -204,6 +204,12 @@ def test_reports(demo_db, tmp_path):
     assert "Card installments" in ok(db, "upcoming", "--date", "2026-09-30")
     out = ok(db, "installments", "--date", "2026-09-30")
     assert "ARCELIK" in out and "Still to come" in out
+    out = ok(db, "returns", "--end", "2026-09-30")
+    assert "Assets:Investments:Demo Share" in out and "real TRY (" in out and "Money-weighted" in out
+    out = ok(db, "risk", "--end", "2026-09-30")
+    assert "Volatility a year" in out and "DEMO.SHARE" in out and "Backtest" in out
+    out = ok(db, "concentration", "--date", "2026-09-30")
+    assert "Sample Broker" in out and "Deposit insurance" in out
 
 
 def test_categorize_and_recategorize(demo_db):

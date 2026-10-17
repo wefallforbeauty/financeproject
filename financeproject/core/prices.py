@@ -102,3 +102,7 @@ class PriceBook:
     def last_date(self, commodity: str, quote: str) -> date | None:
         dates = self._dates.get((commodity, quote))
         return dates[-1] if dates else None
+
+    def dates(self, commodity: str) -> list[date]:
+        """Days with a quote of ``commodity`` in any currency."""
+        return sorted({d for (c, _), days in self._dates.items() if c == commodity for d in days})
