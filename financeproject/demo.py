@@ -6,8 +6,8 @@ month:
 - salary and time deposit interest;
 - rent, utility bills, a phone and an internet subscription, two streaming
   subscriptions (one gets more expensive halfway);
-- card purchases at named shops, two of them in installments (a laptop in 6,
-  a washing machine in 9);
+- card purchases at shops with generic names (no real chains), two of them in
+  installments (a laptop in 6, a washing machine in 9);
 - card payments (the month's purchases plus the installments due), private
   pension contributions, savings in dollars and gold;
 - a consumer loan taken before the ledger starts (its terms are recorded, so
@@ -110,23 +110,23 @@ OPENING = (
 )
 SHOPS = (
     # category, base amount, shops (weights: groceries twice)
-    ("Expenses:Food:Groceries", 2200, ("MIGROS", "BIM", "A101", "SOK MARKET")),
-    ("Expenses:Food:Groceries", 2200, ("MIGROS", "BIM", "A101", "SOK MARKET")),
-    ("Expenses:Food:Restaurants", 1100, ("KOFTECI YUSUF", "SIMIT SARAYI", "BURGER KING")),
-    ("Expenses:Transport", 800, ("OPET", "SHELL", "ISTANBULKART DOLUM")),
-    ("Expenses:Clothing", 2500, ("LC WAIKIKI", "DEFACTO", "KOTON")),
-    ("Expenses:Health", 1500, ("SIFA ECZANESI", "HAYAT ECZANESI")),
-    ("Expenses:Home", 2000, ("KOCTAS", "IKEA", "ENGLISH HOME")),
+    ("Expenses:Food:Groceries", 2200, ("SUPERMARKET", "DISCOUNT MARKET", "NEIGHBORHOOD MARKET", "GREENGROCER")),
+    ("Expenses:Food:Groceries", 2200, ("SUPERMARKET", "DISCOUNT MARKET", "NEIGHBORHOOD MARKET", "GREENGROCER")),
+    ("Expenses:Food:Restaurants", 1100, ("KEBAB HOUSE", "BAKERY CAFE", "BURGER RESTAURANT")),
+    ("Expenses:Transport", 800, ("GAS STATION", "FUEL STATION", "TRANSIT CARD TOP-UP")),
+    ("Expenses:Clothing", 2500, ("CLOTHING STORE", "FASHION OUTLET", "SHOE SHOP")),
+    ("Expenses:Health", 1500, ("CITY PHARMACY", "CORNER PHARMACY")),
+    ("Expenses:Home", 2000, ("HARDWARE STORE", "FURNITURE STORE", "HOME DECOR")),
 )
 SUBSCRIPTIONS = (
     # payee, category, first price, later price (from the 7th month), day
-    ("NETFLIX.COM", "Expenses:Subscriptions", "229.99", "279.99", 7),
-    ("SPOTIFY", "Expenses:Subscriptions", "99.99", "99.99", 12),
+    ("VIDEO STREAMING", "Expenses:Subscriptions", "229.99", "279.99", 7),
+    ("MUSIC STREAMING", "Expenses:Subscriptions", "99.99", "99.99", 12),
 )
 INSTALLMENT_PURCHASES = (
     # month index, day, payee, category, base amount, installments
-    (2, 14, "TEKNOSA", "Expenses:Electronics", 36000, 6),
-    (7, 22, "ARCELIK", "Expenses:Home", 24000, 9),
+    (2, 14, "ELECTRONICS STORE", "Expenses:Electronics", 36000, 6),
+    (7, 22, "APPLIANCE STORE", "Expenses:Home", 24000, 9),
 )
 
 
@@ -276,14 +276,14 @@ def build_demo(
         for category, base, day, payee in (
             ("Expenses:Bills:Electricity", 1200, 10, "ELECTRICITY COMPANY"),
             ("Expenses:Bills:Natural Gas", 3500 if winter else 500, 12, "GAS COMPANY"),
-            ("Expenses:Bills:Phone", 400, 9, "TURKCELL"),
+            ("Expenses:Bills:Phone", 400, 9, "MOBILE OPERATOR"),
         ):
             if due(day):
                 amount = _money(base * f * rng.uniform(0.85, 1.15))
                 record_expense(session, amount, category, CHECKING, on(day), f"{payee} bill", payee=payee)
                 count += 1
         if due(18):
-            record_expense(session, Decimal("649.00"), "Expenses:Bills:Internet", CHECKING, on(18), "SUPERONLINE internet", payee="SUPERONLINE")
+            record_expense(session, Decimal("649.00"), "Expenses:Bills:Internet", CHECKING, on(18), "INTERNET PROVIDER bill", payee="INTERNET PROVIDER")
             count += 1
         if due(20) and next_number(loan) is not None:
             record_payment(session, loan, on(20), CHECKING)

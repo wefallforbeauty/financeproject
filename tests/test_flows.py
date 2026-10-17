@@ -193,12 +193,12 @@ def test_recurring_and_upcoming_on_the_demo(session):
     market = load_market_data(session)
     build_demo(session, start, end, market.book, market.deflator)
     found = {s.label: s for s in recurring(session)}
-    assert found["NETFLIX.COM"].period.name == "monthly" and found["NETFLIX.COM"].typical == Decimal("279.99")
-    assert found["SPOTIFY"].fixed
+    assert found["VIDEO STREAMING"].period.name == "monthly" and found["VIDEO STREAMING"].typical == Decimal("279.99")
+    assert found["MUSIC STREAMING"].fixed
     assert found["SAMPLE EMPLOYER LTD"].direction == 1
-    assert "BURGER KING" not in found  # irregular restaurant visits are not a series
+    assert "BURGER RESTAURANT" not in found  # irregular restaurant visits are not a series
     items = upcoming(session, date(2026, 10, 1), days=31, series=list(found.values()))
     labels = [u.label for u in items]
     assert "Card installments (Sample Card)" in labels
-    assert labels.count("NETFLIX.COM") == 1
+    assert labels.count("VIDEO STREAMING") == 1
     assert all(date(2026, 10, 1) <= u.on <= date(2026, 11, 1) for u in items if u.kind == "recurring")
