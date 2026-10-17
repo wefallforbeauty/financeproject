@@ -244,8 +244,8 @@ finance txn recategorize 251 "Expenses:Gifts"      # fix one; the model learns f
 ```
 
 On the demo household, guessing each transaction from the earlier ones only,
-the model was right 88.6 % of the time; the 75 % of guesses that reached 80 %
-probability were right 98.1 % of the time.
+the model was right 90.7 % of the time; the guesses that reached 80 %
+probability, four in five, were right 98.8 % of the time.
 
 ### Loans and debts
 

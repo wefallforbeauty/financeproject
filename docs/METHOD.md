@@ -414,13 +414,14 @@ applied when its posterior probability reaches 80 %.
 (Zadrozny & Elkan 2001), so the threshold is checked empirically, with
 prequential ("test then train") evaluation (Dawid 1984): the ledger is walked
 in date order, each transaction is guessed from the earlier ones only, and
-then learned. On the demo household (215 categorized transactions):
+then learned. On the demo household (216 categorized transactions, shops
+with generic names):
 
 | Measure | Value |
 |---|---|
-| Right, among all guesses | 88.6 % |
-| Guesses reaching 80 % | 75.1 % of the transactions |
-| Right, among those | 98.1 % |
+| Right, among all guesses | 90.7 % |
+| Guesses reaching 80 % | 79.6 % of the transactions |
+| Right, among those | 98.8 % |
 
 Beancount's smart_importer uses a linear support vector machine on similar
 features. Naive Bayes was chosen because it needs no extra dependency, learns

@@ -200,10 +200,10 @@ def test_reports(demo_db, tmp_path):
     for unit in ("try", "real", "usd", "gold"):
         out = ok(db, "change", "--month", "2026-09", "--unit", unit)
         assert "Net saving" in out and "Revaluation" in out
-    assert "NETFLIX.COM" in ok(db, "recurring", "--date", "2026-09-30")
+    assert "VIDEO STREAMING" in ok(db, "recurring", "--date", "2026-09-30")
     assert "Card installments" in ok(db, "upcoming", "--date", "2026-09-30")
     out = ok(db, "installments", "--date", "2026-09-30")
-    assert "ARCELIK" in out and "Still to come" in out
+    assert "APPLIANCE STORE" in out and "Still to come" in out
     out = ok(db, "returns", "--end", "2026-09-30")
     assert "Assets:Investments:Demo Share" in out and "real TRY (" in out and "Money-weighted" in out
     out = ok(db, "risk", "--end", "2026-09-30")
