@@ -54,6 +54,7 @@ from financeproject.ingest.tables import Cell
 
 NAME = "Ziraat Bankası"
 KEY = "ziraat"
+INPUT = "table"
 SUFFIXES = (".xlsx", ".html", ".htm")
 
 _HEADERS = {

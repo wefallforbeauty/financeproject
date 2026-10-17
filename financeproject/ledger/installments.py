@@ -31,7 +31,7 @@ from financeproject.core.money import quantum
 from financeproject.errors import LedgerError
 from financeproject.ledger.accounts import find_account
 from financeproject.ledger.models import Account, InstallmentPlan, Transaction
-from financeproject.ledger.transactions import record_expense
+from financeproject.ledger.transactions import MANUAL_SOURCE, record_expense
 
 MIN_INSTALLMENTS, MAX_INSTALLMENTS = 2, 36
 
@@ -85,6 +85,9 @@ def record_installment_purchase(
     count: int,
     first_due: date | None = None,
     payee: str | None = None,
+    *,
+    source: str = MANUAL_SOURCE,
+    import_key: str | None = None,
 ) -> Transaction:
     """Book the purchase in full on the card and store its installment plan."""
     if not MIN_INSTALLMENTS <= count <= MAX_INSTALLMENTS:
@@ -95,7 +98,7 @@ def record_installment_purchase(
     due = month_start(first_due) if first_due else add_months(month_start(on), 1)
     if due < month_start(on):
         raise LedgerError("The first installment cannot fall due before the month of the purchase.")
-    tx = record_expense(session, amount, expense_account, account, on, description, payee)
+    tx = record_expense(session, amount, expense_account, account, on, description, payee, source=source, import_key=import_key)
     tx.installment_plan = InstallmentPlan(account=account, count=count, first_due=due, total=amount)
     session.flush()
     return tx
@@ -131,3 +134,17 @@ def not_billed(session: Session, month: date, on: date | None = None) -> dict[st
         if i.month > month_start(month) and (on is None or i.purchased_on <= on):
             out[i.account] += i.amount
     return dict(out)
+
+
+def matching_plan(
+    session: Session, card: Account, total: Decimal, count: int, purchased: date, days: int = 7
+) -> InstallmentPlan | None:
+    """The card's plan for a purchase of ``total`` in ``count`` installments made within ``days`` of
+    ``purchased`` (the closest one), as a card list shows it month after month."""
+    found = [
+        p
+        for p in plans(session)
+        if p.account_id == card.id and p.count == count and p.total == total
+        and abs((p.transaction.date - purchased).days) <= days
+    ]
+    return min(found, key=lambda p: abs((p.transaction.date - purchased).days), default=None)

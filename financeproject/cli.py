@@ -737,6 +737,9 @@ def _print_import(result, dry_run: bool) -> None:
     learned = f", {result.learned} by the learned model" if result.learned else ""
     if result.loan_payments:
         learned += f", {result.loan_payments} loan installment{'s' if result.loan_payments != 1 else ''} split"
+    if result.installment_purchases:
+        n = result.installment_purchases
+        learned += f", {n} installment purchase{'s' if n != 1 else ''} booked in full with {'their plans' if n != 1 else 'its plan'}"
     if dry_run:
         console.print(
             f"[yellow]Dry run:[/] {result.new} new{learned}, {result.duplicates} already in, "
@@ -748,6 +751,20 @@ def _print_import(result, dry_run: bool) -> None:
             f"[green]{result.added} transactions added[/]{learned}, {result.duplicates} were already in, "
             f"{result.uncategorized} uncategorized{hint}."
         )
+    notes = []
+    if result.covered_installments:
+        n = result.covered_installments
+        notes.append(f"{n} card installment{'s' if n != 1 else ''} of purchases already in the ledger (counted with the purchase)")
+    if result.matched_transfers:
+        n = result.matched_transfers
+        notes.append(f"{n} transfer{'s' if n != 1 else ''} the ledger already had from the other account")
+    if result.older_installments:
+        n = result.older_installments
+        notes.append(
+            f"{n} installment{'s' if n != 1 else ''} of purchases made before the ledger, booked one by one"
+        )
+    for note in notes:
+        console.print(f"  {note}")
     for reference, lines in sorted(result.unknown_loans.items()):
         verb = "would go" if dry_run else "went"
         console.print(
@@ -772,9 +789,14 @@ def _print_import(result, dry_run: bool) -> None:
 @guarded
 def import_(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="A CSV file, or a bank statement (.xlsx, .html)")],
+    file: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="A CSV file, or a bank statement (.xlsx, .html, .pdf)")
+    ],
     account: Annotated[
         Optional[str], typer.Option(help="The statement's account; for CSV, the account of rows without one")
+    ] = None,
+    payments_from: Annotated[
+        Optional[str], typer.Option(help="Card lists: the account the card is paid from (payments become transfers)")
     ] = None,
     bank: Annotated[str, typer.Option(help="Bank template: 'auto' or one of the templates (see README)")] = "auto",
     opening: Annotated[
@@ -797,19 +819,17 @@ def import_(
 
     Bank statements (.xlsx, .html) are recognized by their template, checked
     line by line against the bank's running balance and totals, and compared
-    with the ledger afterwards. CSV format: README → Importing.
+    with the ledger afterwards. Credit card lists (.pdf) go into the card's
+    account; installments are matched with the purchases' plans. CSV format:
+    README → Importing.
     """
-    from financeproject.ingest.banks import (
-        EXCEL_SUFFIXES,
-        HTML_SUFFIXES,
-        read_statement,
-    )
+    from financeproject.ingest.banks import STATEMENT_SUFFIXES, read_statement
     from financeproject.ingest.csvfile import CsvFormat, import_csv, parse_column_map
     from financeproject.ingest.importer import import_statement
 
     if not 0 < min_confidence <= 1:
         raise FinanceError("--min-confidence must be between 0 and 1.")
-    if bank != "auto" or file.suffix.lower() in EXCEL_SUFFIXES + HTML_SUFFIXES:
+    if bank != "auto" or file.suffix.lower() in STATEMENT_SUFFIXES:
         statement = read_statement(file, None if bank == "auto" else bank)
         if not account:
             raise FinanceError("A bank statement needs --account: the ledger account it belongs to.")
@@ -819,13 +839,24 @@ def import_(
             if statement.has_balances
             else ""
         )
-        console.print(f"[bold]{escape(statement.bank)}[/] statement, {period}, {len(statement.lines)} lines{balances}")
+        what = "card list" if statement.card else "statement"
+        console.print(f"[bold]{escape(statement.bank)}[/] {what}, {period}, {len(statement.lines)} lines{balances}")
         with ledger(ctx) as s:
             result = import_statement(
-                s, statement, file, account, dry_run=dry_run, add_opening=opening, use_model=learn, min_confidence=min_confidence
+                s,
+                statement,
+                file,
+                account,
+                dry_run=dry_run,
+                add_opening=opening,
+                use_model=learn,
+                min_confidence=min_confidence,
+                payments_from=payments_from,
             )
             _print_import(result, dry_run)
         return
+    if payments_from:
+        raise FinanceError("--payments-from is for credit card lists.")
     if opening:
         raise FinanceError("--opening works with bank statements, which carry balances; CSV files do not.")
     _check_choice(decimal, ("auto", ",", "."), "--decimal")

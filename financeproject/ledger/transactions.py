@@ -181,18 +181,23 @@ def record_expense(
     on: date,
     description: str,
     payee: str | None = None,
+    *,
+    source: str = MANUAL_SOURCE,
+    import_key: str | None = None,
 ) -> Transaction:
     _positive(amount)
     expense = find_account(session, expense_account)
     if expense.type != EXPENSE:
         raise LedgerError(f"The expense account must start with 'Expenses:': {expense.path}")
-    source = _balance_sheet_account(session, paid_from, "The account paid from")
+    paying = _balance_sheet_account(session, paid_from, "The account paid from")
     return add_transaction(
         session,
         on,
         description,
-        [Leg(expense, amount, commodity=source.commodity_code), Leg(source, -amount)],
+        [Leg(expense, amount, commodity=paying.commodity_code), Leg(paying, -amount)],
         payee=payee,
+        source=source,
+        import_key=import_key,
     )
 
 
