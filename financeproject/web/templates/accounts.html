@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Accounts") }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ _("Accounts") }}</h1><p>{{ _("Balances today. Debts and income are shown as positive amounts.") }}</p></div>
+</header>
+{% if error %}<div class="alerts"><div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text">{{ error }}</div></div></div>{% endif %}
+<div class="grid side">
+  <div>
+    {% for type, title in sections %}
+    {% set items = rows[type] %}
+    {% if items %}
+    <article class="card flush mb">
+      <div class="card-head"><h2>{{ _(title) }}</h2></div>
+      <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>{{ _("Account") }}</th>{% if type in ("asset", "liability") %}<th>{{ _("Kind") }}</th>{% endif %}<th class="num">{{ _("Balance") }}</th>{% if type in ("asset", "liability") %}<th class="num">TRY</th>{% endif %}</tr></thead>
+        <tbody>
+        {% for r in items %}
+          <tr>
+            <td><a class="desc" href="/accounts/{{ r.account.id }}">{{ r.account.path.split(":", 1)[1] }}</a>
+              {% if r.account.institution %}<span class="sub">{{ r.account.institution }}</span>{% endif %}
+              {% if r.account.closed_on %}<span class="badge">{{ _("closed") }}</span>{% endif %}</td>
+            {% if type in ("asset", "liability") %}<td class="sub">{{ _(r.kind) }}</td>{% endif %}
+            <td class="num">{% for code, value in r.held.items() %}{{ money(value, 2 if code in ("TRY", "USD", "EUR") else 4) }}{% if code != "TRY" %} {{ code }}{% endif %}{% if not loop.last %}<br>{% endif %}{% else %}0{% endfor %}</td>
+            {% if type in ("asset", "liability") %}<td class="num">{{ money(r.value) if r.value is not none else "—" }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </article>
+    {% endif %}
+    {% endfor %}
+    {% if not rows["asset"] and not rows["liability"] %}
+    <article class="card"><div class="empty"><h2>{{ _("No accounts yet") }}</h2><p>{{ _("Add your bank accounts, cards and cash with the form, each with what it holds today.") }}</p></div></article>
+    {% endif %}
+  </div>
+
+  <article class="card">
+    <h2>{{ _("Add an account or a category") }}</h2>
+    <form class="form" method="post" action="/accounts">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="field"><span>{{ _("What is it?") }}</span>
+        <select name="kind">
+          {% for group, kinds_ in kinds %}
+          <optgroup label="{{ _(group) }}">{% for key, label in kinds_ %}<option value="{{ key }}" {% if form.get('kind', 'checking') == key %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}</optgroup>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field"><span>{{ _("Name") }}</span><input type="text" name="name" value="{{ form.get('name', '') }}" required placeholder="{{ _('Checking, Bonus Card, Food:Groceries…') }}">
+        <span class="hint">{{ _("Use ':' for groups (Food:Groceries). A full path (Assets:Bank:…) is kept as it is.") }}</span></label>
+      <label class="field"><span>{{ _("Bank or institution") }}</span><input type="text" name="institution" value="{{ form.get('institution', '') }}"></label>
+      <label class="field"><span>{{ _("Unit") }}</span>
+        <select name="commodity">
+          <option value="">{{ _("Default for the kind") }}</option>
+          {% for c in units %}<option value="{{ c.code }}" {% if form.get('commodity') == c.code %}selected{% endif %}>{{ c.code }} · {{ c.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="row">
+        <label class="field"><span>{{ _("Balance today") }}</span><input type="text" inputmode="decimal" name="opening" value="{{ form.get('opening', '') }}" placeholder="0">
+          <span class="hint">{{ _("What it holds, or what you owe on a debt.") }}</span></label>
+        <label class="field"><span>{{ _("On") }}</span><input type="date" name="opening_date" value="{{ form.get('opening_date', today.isoformat()) }}"></label>
+      </div>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Add") }}</button></div>
+    </form>
+  </article>
+</div>
+{% endblock %}

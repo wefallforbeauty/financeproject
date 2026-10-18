@@ -28,9 +28,11 @@ from __future__ import annotations
 import math
 import random
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import ROUND_FLOOR, Decimal
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -332,3 +334,76 @@ def build_demo(
         month = add_months(month, 1)
         index += 1
     return DemoSummary(start, end, count, skipped)
+
+
+@dataclass
+class DemoLedger:
+    path: Path
+    summary: DemoSummary
+    prices: str
+    """Where the exchange rates and gold prices came from."""
+    warning: str | None = None
+
+
+def create_demo_ledger(
+    path: Path,
+    start: date,
+    end: date,
+    *,
+    synthetic: bool = False,
+    api_key: str | None = None,
+    overwrite: bool = False,
+    progress: Callable[[str], None] | None = None,
+) -> DemoLedger:
+    """Build the demo household in its own ledger at ``path``.
+
+    Real exchange rates and gold prices are downloaded unless ``synthetic``;
+    if the download fails, made-up prices are used. The user's own ledger is
+    never written to.
+    """
+    import httpx
+
+    from financeproject import config
+    from financeproject.errors import FinanceError
+    from financeproject.ledger.db import init_db, make_engine, session_scope
+    from financeproject.prices.http import make_client
+    from financeproject.prices.update import load_bundled_cpi, update_fx, update_gold
+    from financeproject.reports.context import load_market_data
+
+    path = Path(path)
+    if path.resolve() == config.default_db_path().resolve():
+        raise FinanceError("Demo data never goes into your real ledger; choose another file.")
+    if path.exists():
+        if not overwrite:
+            raise FinanceError(f"{path} already exists; build it again to replace it.")
+        path.unlink()
+    warning = None
+    engine = make_engine(path)
+    try:
+        init_db(engine)
+        with session_scope(engine) as s:
+            load_bundled_cpi(s)
+            source = "made up"
+            if not synthetic:
+                try:
+                    with make_client() as client:
+                        update_fx(s, client, start - timedelta(days=7), end, ["USD"], api_key, pause=0.1, progress=progress)
+                        update_gold(s, client, start - timedelta(days=7), end, progress=progress)
+                    source = "TCMB + Frankfurter"
+                except (httpx.HTTPError, FinanceError) as exc:
+                    warning = f"Download failed ({exc}); made-up prices were used."
+                    s.rollback()
+                    load_bundled_cpi(s)
+                    synthetic = True
+            if synthetic:
+                for q in synthetic_prices(start - timedelta(days=7), end):
+                    upsert_price(s, q.commodity, q.quote, q.on, q.value, SYNTHETIC_SOURCE)
+            s.flush()
+            if progress:
+                progress("Building the household")
+            market = load_market_data(s)
+            summary = build_demo(s, start, end, market.book, market.deflator)
+    finally:
+        engine.dispose()
+    path.chmod(0o600)
+    return DemoLedger(path, summary, source, warning)

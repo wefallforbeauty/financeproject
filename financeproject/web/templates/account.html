@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ account.path }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ account.path.split(":")[-1] }}</h1><p>{{ account.path }}{% if kind %} · {{ _(kind) }}{% endif %}{% if account.institution %} · {{ account.institution }}{% endif %}</p></div>
+  <div class="actions"><a class="btn" href="/accounts">{{ _("All accounts") }}</a></div>
+</header>
+<div class="grid side">
+  <article class="card flush">
+    <div class="card-head"><h2>{{ _("Latest transactions") }}</h2>{% if total > recent|length %}<a href="/transactions?account={{ account.path|urlencode }}">{{ _("All {n}", n=total) }}</a>{% endif %}</div>
+    {% if recent %}
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>{{ _("Date") }}</th><th>{{ _("Description") }}</th><th class="num">{{ _("Amount") }}</th></tr></thead>
+      <tbody>
+      {% for r in recent %}<tr><td class="nowrap">{{ r.date.isoformat() }}</td><td><a class="desc" href="/transactions/{{ r.id }}">{{ r.payee or r.description }}</a></td><td class="num">{{ money(r.amount) }}{% if r.commodity != "TRY" %} {{ r.commodity }}{% endif %}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}<div class="empty"><p>{{ _("No transactions yet.") }}</p></div>{% endif %}
+  </article>
+  <div>
+    <article class="card">
+      <h2>{{ _("Balance") }}</h2>
+      <p class="stat-value">{% for code, value in held.items() %}{{ money(value, 2 if code in ("TRY", "USD", "EUR") else 4) }} <span class="unit">{{ code }}</span>{% if not loop.last %}<br>{% endif %}{% else %}0{% endfor %}</p>
+      <dl class="kv mt">
+        <dt>{{ _("Unit") }}</dt><dd>{{ account.commodity_code or _("any") }}</dd>
+        {% if account.type in ("asset", "liability") %}<dt>{{ _("Owner") }}</dt><dd>{{ owner }}</dd>{% endif %}
+        {% if account.opened_on %}<dt>{{ _("Opened") }}</dt><dd>{{ account.opened_on.isoformat() }}</dd>{% endif %}
+        {% if account.closed_on %}<dt>{{ _("Closed") }}</dt><dd>{{ account.closed_on.isoformat() }}</dd>{% endif %}
+      </dl>
+    </article>
+    {% if not account.closed_on and account.type in ("asset", "liability") %}
+    <article class="card mt">
+      <h2>{{ _("Close the account") }}</h2>
+      <p class="small muted">{{ _("Its balance must be zero on that day, with no transactions after it.") }}</p>
+      <form class="form inline" method="post" action="/accounts/{{ account.id }}/close" data-confirm="{{ _('Close this account?') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <label class="field"><span>{{ _("On") }}</span><input type="date" name="date" value="{{ today.isoformat() }}"></label>
+        <button class="btn danger" type="submit">{{ _("Close") }}</button>
+      </form>
+    </article>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import account_options with context %}
+{% block title %}{{ _("Add a transaction") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Add a transaction") }}</h1></div></header>
+<nav class="tabs" aria-label="{{ _('Kind of transaction') }}">
+  {% for key, label in [("expense", _("Expense")), ("income", _("Income")), ("transfer", _("Transfer")), ("exchange", _("Buy or sell (currency, gold, funds)"))] %}
+  <a href="/transactions/new?kind={{ key }}" {% if kind == key %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% if error %}<div class="alerts"><div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text">{{ error }}</div></div></div>{% endif %}
+<article class="card">
+<form class="form" method="post" action="/transactions/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="kind" value="{{ kind }}">
+  {% if kind in ("expense", "income") %}
+    <div class="row">
+      <label class="field"><span>{{ _("Amount") }}</span><input type="text" inputmode="decimal" name="amount" value="{{ form.get('amount', '') }}" required autofocus></label>
+      <label class="field"><span>{{ _("Date") }}</span><input type="date" name="date" value="{{ form.get('date', today.isoformat()) }}" required></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>{{ _("Category") }}</span>
+        <select name="category">
+          {% set cats = options.expense if kind == "expense" else options.income %}
+          {{ account_options(cats, form.get('category', ''), True, _("Choose…")) }}
+        </select>
+      </label>
+      <label class="field"><span>{{ _("or a new category") }}</span><input type="text" name="new_category" value="{{ form.get('new_category', '') }}" placeholder="{{ _('Food:Coffee') if kind == 'expense' else _('Bonus') }}"></label>
+    </div>
+    <label class="field"><span>{{ _("Paid from") if kind == "expense" else _("Paid into") }}</span>
+      <select name="account" required>{{ account_options(options.money, form.get('account', ''), True, _("Choose…")) }}</select>
+    </label>
+    <div class="row">
+      <label class="field"><span>{{ _("Description") }}</span><input type="text" name="description" value="{{ form.get('description', '') }}" placeholder="{{ _('Default: the category') }}"></label>
+      <label class="field"><span>{{ _("Payee") }}</span><input type="text" name="payee" value="{{ form.get('payee', '') }}"></label>
+    </div>
+    {% if kind == "expense" %}
+    <details class="more" {% if form.get('installments') %}open{% endif %}>
+      <summary>{{ _("In installments (credit cards)") }}</summary>
+      <div class="row">
+        <label class="field"><span>{{ _("Number of installments") }}</span><input type="number" min="2" max="36" name="installments" value="{{ form.get('installments', '') }}"></label>
+        <label class="field"><span>{{ _("Month of the first installment") }}</span><input type="month" name="first_due" value="{{ form.get('first_due', '') }}"><span class="hint">{{ _("Default: the next month") }}</span></label>
+      </div>
+      <p class="small muted">{{ _("The whole purchase is a debt from its day; the plan records when the parts fall due.") }}</p>
+    </details>
+    {% endif %}
+  {% elif kind == "transfer" %}
+    <div class="row">
+      <label class="field"><span>{{ _("Amount") }}</span><input type="text" inputmode="decimal" name="amount" value="{{ form.get('amount', '') }}" required autofocus></label>
+      <label class="field"><span>{{ _("Date") }}</span><input type="date" name="date" value="{{ form.get('date', today.isoformat()) }}" required></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>{{ _("From") }}</span><select name="from" required>{{ account_options(options.money, form.get('from', ''), True, _("Choose…")) }}</select></label>
+      <label class="field"><span>{{ _("To") }}</span><select name="to" required>{{ account_options(options.money, form.get('to', ''), True, _("Choose…")) }}</select></label>
+    </div>
+    <label class="field"><span>{{ _("Description") }}</span><input type="text" name="description" value="{{ form.get('description', '') }}"></label>
+    <p class="small muted">{{ _("Paying a credit card from the bank is a transfer.") }}</p>
+  {% else %}
+    <div class="row">
+      <label class="field"><span>{{ _("From") }}</span><select name="from" required>{{ account_options(options.money, form.get('from', ''), True, _("Choose…")) }}</select></label>
+      <label class="field"><span>{{ _("Amount paid") }}</span><input type="text" inputmode="decimal" name="paid" value="{{ form.get('paid', '') }}" required></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>{{ _("To") }}</span><select name="to" required>{{ account_options(options.money, form.get('to', ''), True, _("Choose…")) }}</select></label>
+      <label class="field"><span>{{ _("Amount received") }}</span><input type="text" inputmode="decimal" name="received" value="{{ form.get('received', '') }}" required></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>{{ _("Date") }}</span><input type="date" name="date" value="{{ form.get('date', today.isoformat()) }}" required></label>
+      <label class="field"><span>{{ _("Description") }}</span><input type="text" name="description" value="{{ form.get('description', '') }}"></label>
+    </div>
+    <p class="small muted">{{ _("Buying dollars, gold or fund units with lira, or selling them: two accounts in different units.") }}</p>
+  {% endif %}
+  <div class="actions"><button class="btn primary" type="submit">{{ _("Add") }}</button><a class="btn" href="/transactions">{{ _("Cancel") }}</a></div>
+</form>
+</article>
+{% endblock %}

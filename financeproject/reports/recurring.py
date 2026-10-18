@@ -58,6 +58,18 @@ class Upcoming:
     kind: str
     """``recurring``, ``installments`` or ``loan``."""
     note: str = ""
+    # the parts of the label and note, for an interface that words them in its own language
+    period: str | None = None
+    """Recurring: the period's name (``monthly``…)."""
+    fixed: bool = False
+    """Recurring: the same amount every time (otherwise about the typical amount)."""
+    late: bool = False
+    """Recurring: the last one is late; loans: the installment is overdue."""
+    account: str | None = None
+    """Installments: the card's name."""
+    loan: str | None = None
+    number: int | None = None
+    count: int | None = None
 
 
 def upcoming(session: Session, today: date, days: int = 30, series: list[Series] | None = None) -> list[Upcoming]:
@@ -69,25 +81,38 @@ def upcoming(session: Session, today: date, days: int = 30, series: list[Series]
         if status == STOPPED:
             continue
         amount_note = "fixed" if s.fixed else "about"
+        parts = {"period": s.period.name, "fixed": s.fixed}
         if status == LATE:
-            out.append(Upcoming(s.next_due, s.label, s.typical, s.commodity, s.direction, "recurring", f"late; {s.period.name}, {amount_note}"))
-            dates = s.due_dates(today, end)
-        else:
-            dates = s.due_dates(today, end)
-        for d in dates:
-            out.append(Upcoming(d, s.label, s.typical, s.commodity, s.direction, "recurring", f"{s.period.name}, {amount_note}"))
+            out.append(
+                Upcoming(
+                    s.next_due, s.label, s.typical, s.commodity, s.direction, "recurring",
+                    f"late; {s.period.name}, {amount_note}", late=True, **parts,
+                )
+            )
+        for d in s.due_dates(today, end):
+            out.append(
+                Upcoming(d, s.label, s.typical, s.commodity, s.direction, "recurring", f"{s.period.name}, {amount_note}", **parts)
+            )
     by_card: dict[tuple[date, str], Decimal] = defaultdict(Decimal)
     for i in due_between(session, month_start(today), month_start(end)):
         by_card[(i.month, i.account)] += i.amount
     for (month, account), amount in sorted(by_card.items()):
         card = account.split(":")[-1]
-        out.append(Upcoming(month, f"Card installments ({card})", amount, "TRY", -1, "installments", "due this month"))
+        out.append(
+            Upcoming(month, f"Card installments ({card})", amount, "TRY", -1, "installments", "due this month", account=card)
+        )
     for loan in all_loans(session):
         state = loan_state(session, loan, today)
         unit = loan.account.commodity_code or "TRY"
         for i in state.remaining:
             if i.due > end:
                 break
-            note = "overdue" if i.due < today else f"{i.number} of {loan.count}"
-            out.append(Upcoming(i.due, f"{loan.name}: installment {i.number}", i.payment, unit, -1, "loan", note))
+            overdue = i.due < today
+            note = "overdue" if overdue else f"{i.number} of {loan.count}"
+            out.append(
+                Upcoming(
+                    i.due, f"{loan.name}: installment {i.number}", i.payment, unit, -1, "loan", note,
+                    late=overdue, loan=loan.name, number=i.number, count=loan.count,
+                )
+            )
     return sorted(out, key=lambda u: (u.on, -u.amount))

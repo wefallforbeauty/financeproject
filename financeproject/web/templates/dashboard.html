@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Overview") }}{% endblock %}
+{% block scripts %}<script src="/static/vendor/echarts.min.js?v=6.1.0" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ _("Overview") }}</h1>
+    <p>{{ today.isoformat() }}{% if demo %} · {{ _("the made-up demo household") }}{% endif %}</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/transactions/new">{{ _("Add a transaction") }}</a>
+    <a class="btn primary" href="/import">{{ _("Import a file") }}</a>
+  </div>
+</header>
+
+{% if alerts %}
+<section class="alerts" aria-label="{{ _('Needs attention') }}">
+  {% for a in alerts %}
+  <div class="alert {{ a.severity }}">
+    <span class="icon" aria-hidden="true">{{ "!" if a.severity != "info" else "i" }}</span>
+    <div class="text">
+      {% if a.code == "no_accounts" %}{{ _("Start by adding your accounts: bank accounts, cards, cash, savings.") }}
+      {% elif a.code == "no_transactions" %}{{ _("No transactions yet. Import a bank statement, or add one by hand.") }}
+      {% elif a.code == "uncategorized" %}{{ _.n("{n} transaction needs a category.", "{n} transactions need a category.", a.params.count) }}
+      {% elif a.code == "bank_difference" %}{{ _("{account}: on {on} the ledger differs from the bank by {difference} (last imported: {file}).", account=a.params.account, on=a.params.on, difference=money(a.params.difference), file=a.params.file) }}
+      {% elif a.code == "missing_price" %}{{ _("No price for {accounts}; left out of net worth.", accounts=", ".join(a.params.accounts)) }}
+      {% elif a.code == "stale_price" %}{{ _("Prices older than a week: {accounts}.", accounts=", ".join(a.params.accounts)) }}
+      {% endif %}
+    </div>
+    {% if a.code == "no_accounts" %}<a href="/accounts">{{ _("Add accounts") }}</a>
+    {% elif a.code == "no_transactions" %}<a href="/import">{{ _("Import a file") }}</a>
+    {% elif a.code == "uncategorized" %}<a href="/categorize">{{ _("Review") }}</a>
+    {% elif a.code == "bank_difference" %}<a href="/imports">{{ _("Imports") }}</a>
+    {% else %}<a href="/settings#prices">{{ _("Update prices") }}</a>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="grid hero-row">
+  <article class="card">
+    <h2 class="label">{{ _("Net worth") }}</h2>
+    <p class="hero-value">{{ money(net.try_, 0) }}<span class="unit">TRY</span></p>
+    {% if previous is not none %}
+      {% set change = net.try_|float - previous %}
+      <p class="delta">
+        <span class="{{ 'up' if change >= 0 else 'down' }}">{{ "+" if change > 0 else "" }}{{ money(change, 0) }}</span>
+        {% if previous > 0 %}({{ percent(change / previous, 1, sign=True) }}){% endif %}
+        {{ _("since the end of last month") }}
+      </p>
+    {% endif %}
+    <dl class="units">
+      {% if net.real_try is not none %}<dt>{{ _("Real TRY") }}{% if base_month %} <span class="small">({{ base_month.strftime("%Y-%m") }})</span>{% endif %}</dt><dd>{{ money(net.real_try, 0) }}</dd>{% endif %}
+      {% if net.usd is not none %}<dt>{{ _("US dollars") }}</dt><dd>{{ money(net.usd, 0) }} USD</dd>{% endif %}
+      {% if net.gold_g is not none %}<dt>{{ _("Grams of gold") }}</dt><dd>{{ money(net.gold_g, 1) }} g</dd>{% endif %}
+      <dt>{{ _("Liquid net assets") }}</dt><dd>{{ money(sheet.liquidity.liquid_net, 0) }} TRY</dd>
+    </dl>
+  </article>
+
+  <article class="card">
+    <div class="card-head">
+      <h2>{{ _("Net worth, month by month") }}</h2>
+      {% if chart.dates %}
+      <div class="segmented" role="group" aria-label="{{ _('Unit') }}">
+        {% for key, label in units %}{% if chart.summaries.get(key) %}<button type="button" data-unit="{{ key }}" aria-pressed="{{ 'true' if key == chart.unit else 'false' }}">{{ _(label) }}</button>{% endif %}{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% if chart.dates %}
+      <div id="networth-chart" class="chart" role="img" aria-label="{{ chart.summaries.get(chart.unit, '') }}"></div>
+      <script type="application/json" id="networth-data">{{ chart|tojson }}</script>
+      <details class="table-view">
+        <summary>{{ _("Show as a table") }}</summary>
+        {% for key, label in units %}{% if chart.summaries.get(key) %}
+        <div class="table-wrap {{ '' if key == chart.unit else 'hidden' }}" data-unit-table="{{ key }}">
+          <table class="data">
+            <thead><tr><th>{{ _("Date") }}</th><th class="num">{{ _(label) }}</th></tr></thead>
+            <tbody>
+              {% for d in chart.dates %}<tr><td>{{ d }}</td><td class="num">{{ money(chart.units[key][loop.index0], chart.decimals[key]) }}</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}{% endfor %}
+      </details>
+    {% else %}
+      <div class="empty"><p>{{ _("The chart appears once there are transactions.") }}</p></div>
+    {% endif %}
+  </article>
+</section>
+
+<section class="grid four">
+  {% set now = flows[this_month] %}{% set before = flows[last_month] %}
+  <article class="card stat">
+    <h2 class="label">{{ _("Income this month") }}</h2>
+    <p class="stat-value">{{ money(now.income, 0) }}<span class="unit">TRY</span></p>
+    <p class="delta">{{ _("last month") }} {{ money(before.income, 0) }}</p>
+  </article>
+  <article class="card stat">
+    <h2 class="label">{{ _("Spending this month") }}</h2>
+    <p class="stat-value">{{ money(now.expenses, 0) }}<span class="unit">TRY</span></p>
+    <p class="delta">{{ _("last month") }} {{ money(before.expenses, 0) }}</p>
+  </article>
+  <article class="card stat">
+    <h2 class="label">{{ _("Saved this month") }}</h2>
+    <p class="stat-value">{{ money(now.net, 0) }}<span class="unit">TRY</span></p>
+    <p class="delta">{% if now.rate is not none %}{{ _("{rate} of income", rate=percent(now.rate)) }}{% else %}{{ _("no income yet") }}{% endif %}</p>
+  </article>
+  <article class="card stat">
+    <h2 class="label">{{ _("Saved last month") }}</h2>
+    <p class="stat-value">{{ money(before.net, 0) }}<span class="unit">TRY</span></p>
+    <p class="delta">{% if before.rate is not none %}{{ _("{rate} of income", rate=percent(before.rate)) }}{% else %}{{ _("no income") }}{% endif %}</p>
+  </article>
+</section>
+
+<section class="grid two">
+  <article class="card">
+    <div class="card-head"><h2>{{ _("Coming up in 30 days") }}</h2></div>
+    {% if coming %}
+    <ul class="list">
+      {% for u, label, note in coming %}
+      <li>
+        <span><span class="desc">{{ label }}</span><span class="sub">{{ u.on.isoformat() }} · {{ note }}</span></span>
+        <span class="num {{ 'in' if u.direction > 0 else '' }}">{{ "+" if u.direction > 0 else "−" }}{{ money(u.amount) }} {{ u.commodity if u.commodity != "TRY" else "" }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">{{ _("Nothing expected in the next 30 days.") }}</p>{% endif %}
+  </article>
+  <article class="card">
+    <div class="card-head"><h2>{{ _("Latest transactions") }}</h2><a href="/transactions">{{ _("All transactions") }}</a></div>
+    {% if recent %}
+    <ul class="list">
+      {% for r in recent %}
+      <li>
+        <span><a class="desc" href="/transactions/{{ r.id }}">{{ r.payee or r.description }}</a><span class="sub">{{ r.date.isoformat() }} · {{ r.categories|map("short")|join(", ") if r.categories else route(r)|join(" → ") }}</span></span>
+        <span class="num {{ 'in' if r.amount > 0 and r.categories else '' }}">{{ row_amount(r) }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">{{ _("No transactions yet.") }}</p>{% endif %}
+  </article>
+</section>
+{% endblock %}

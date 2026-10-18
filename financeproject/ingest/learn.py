@@ -281,6 +281,8 @@ def suggest(session: Session, model: CategoryModel, min_confidence: float = DEFA
 
 
 def apply(session: Session, suggestions: list[Suggestion]) -> None:
+    """Move every suggested posting to its category, recording each change."""
+    from financeproject.ledger.transactions import move_posting
+
     for s in suggestions:
-        s.posting.account = s.account
-    session.flush()
+        move_posting(session, s.posting, s.account)

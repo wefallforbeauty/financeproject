@@ -1,4 +1,4 @@
-# Method (version 03)
+# Method (version 04a)
 
 This document gives the definition, formula and source of everything the
 program computes. A section is added whenever a new model is.
@@ -751,6 +751,60 @@ calendar days in between fold into the next market day. All in TRY.
   A joint account's insurance is shared among its holders, which the ledger
   does not know.
 
+## 27. The interface
+
+`finance ui` serves a web application on the library (FastAPI, Jinja
+templates, HTMX) with uvicorn on 127.0.0.1 only; nothing it shows is computed
+differently from the command line.
+
+**Who may use it.** Every web page open in a browser on this computer can send
+requests to 127.0.0.1 too. Four checks keep them out:
+
+- *Session.* A random key of 256 bits is made at every start. The browser is
+  opened at `/login?token=…`, which puts the key into a cookie (`HttpOnly`,
+  `SameSite=Strict`); every other page needs it. Cookies do not tell ports
+  apart, so the cookie's name carries the port.
+- *Address.* A site can point a name of its own at 127.0.0.1 and then read the
+  answers as its own (DNS rebinding; Jackson et al. 2009). The `Host` header
+  must therefore be `127.0.0.1:PORT` or `localhost:PORT`.
+- *Changes.* A `POST` must carry a token derived from the key
+  (HMAC-SHA-256), in a header (HTMX) or a form field, as in OWASP's
+  synchronizer token pattern; and its `Origin`, when the browser sends one,
+  must be this address. The referrer policy is `same-origin`: under
+  `no-referrer` the Fetch Standard has browsers send `Origin: null` with form
+  posts, which the origin check would refuse; other sites still get no
+  referrer at all.
+- *Scripts.* The Content Security Policy allows only the page's own scripts
+  (`script-src 'self'`): no inline scripts or handlers, no `eval` (HTMX runs
+  with `allowEval: false`). Inline style attributes are allowed, because
+  ECharts's tooltip uses them. Frames are refused, pages are not cached.
+
+An upload may be 25 MB at most; it waits in a folder only the user can read,
+between the preview and the import, and is deleted after either.
+
+**Changes are kept.** Every edit, change of category, deletion, import and
+undo is a row of the change history, with the transaction's legs before and
+after it. Every import is a record of the transactions it added, so undoing
+it deletes exactly those (and its opening balance, if it made one). Before
+every import, undo and deletion a backup is made with SQLite's online backup
+API; the newest 20 of these are kept.
+
+**The net worth chart.** It shows one unit at a time, so it has no legend: the
+title and the pressed unit button name the series. People read position along
+a common scale more accurately than length, angle or area (Cleveland & McGill
+1984), so the line carries the values; the light area under it is only there
+to show the amount, which is why the axis starts at zero. The last point is
+marked and labeled; the pointer shows the month's value first, then its date.
+The same numbers are a table under the chart, and the chart's text
+alternative states the first and last values. The dark theme has its own
+steps of the same blue, checked against the dark background, not an inverted
+light one.
+
+**Languages.** The texts are written in English and looked up in a Turkish
+catalog; one with a count has a singular and a plural form (Turkish uses one
+form after a number). A percentage keeps each language's order: 50% in
+English, %50 in Turkish.
+
 ## References
 
 - Acerbi, C., & Tasche, D. (2002). On the coherence of expected shortfall. *Journal of Banking & Finance*, 26(7), 1487–1503.
@@ -759,6 +813,7 @@ calendar days in between fold into the next market day. All in TRY.
 - Brown, A. L., & Lahey, J. N. (2015). Small victories: Creating intrinsic motivation in task completion and debt repayment. *Journal of Marketing Research*, 52(6), 768–783.
 - Campbell, J. Y. (2006). Household finance. *Journal of Finance*, 61(4), 1553–1604.
 - Christoffersen, P. F. (1998). Evaluating interval forecasts. *International Economic Review*, 39(4), 841–862.
+- Cleveland, W. S., & McGill, R. (1984). Graphical perception: Theory, experimentation, and application to the development of graphical methods. *Journal of the American Statistical Association*, 79(387), 531–554.
 - Dawid, A. P. (1984). Present position and potential developments: Some personal views. Statistical theory: The prequential approach. *Journal of the Royal Statistical Society, Series A*, 147(2), 278–292.
 - DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy? *Review of Financial Studies*, 22(5), 1915–1953.
 - DeVaney, S. A. (1994). The usefulness of financial ratios as predictors of household insolvency: Two perspectives. *Financial Counseling and Planning*, 5, 5–24.
@@ -772,6 +827,7 @@ calendar days in between fold into the next market day. All in TRY.
 - Gümrük ve Ticaret Bakanlığı (2015). Tüketici Kredisi Sözleşmeleri Yönetmeliği. *Resmî Gazete* 29363, 22 May 2015 (the annual cost rate).
 - Hirschman, A. O. (1964). The paternity of an index. *American Economic Review*, 54(5), 761.
 - IFRS Foundation. IAS 7 *Statement of Cash Flows* (classification into operating, investing and financing activities; §28, the effect of exchange rate changes on cash).
+- Jackson, C., Barth, A., Bortz, A., Shao, W., & Boneh, D. (2009). Protecting browsers from DNS rebinding attacks. *ACM Transactions on the Web*, 3(1), article 2.
 - Jorion, P. (2007). *Value at Risk: The New Benchmark for Managing Financial Risk* (3rd ed.). McGraw-Hill.
 - Juster, F. T., Lupton, J. P., Smith, J. P., & Stafford, F. (2006). The decline in household saving and the wealth effect. *Review of Economics and Statistics*, 88(1), 20–27.
 - Kellison, S. G. (2009). *The Theory of Interest* (3rd ed.). McGraw-Hill/Irwin.
@@ -782,6 +838,7 @@ calendar days in between fold into the next market day. All in TRY.
 - McCallum, A., & Nigam, K. (1998). A comparison of event models for naive Bayes text classification. *AAAI-98 Workshop on Learning for Text Categorization*.
 - Michaud, R. O. (1989). The Markowitz optimization enigma: Is "optimized" optimal? *Financial Analysts Journal*, 45(1), 31–42.
 - Microsoft. XIRR function (the worked example). https://support.microsoft.com/en-us/office/xirr-function-de1242ec-6477-445b-b11b-a303ad9adc9d
+- OWASP. Cross-Site Request Forgery Prevention Cheat Sheet. https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
 - Portfolio Performance. Time-weighted rate of return (TTWROR). https://help.portfolio-performance.info/en/concepts/performance/time-weighted
 - Schmidt, M. (2008). The Sankey diagram in energy and material flow management, Part I: History. *Journal of Industrial Ecology*, 12(1), 82–94.
 - Selinger, P. *Tutorial on multiple currency accounting*. https://www.mathstat.dal.ca/~selinger/accounting/tutorial.html
@@ -790,4 +847,6 @@ calendar days in between fold into the next market day. All in TRY.
 - TurkStat (TÜİK). Announcements on the move of the CPI to base year 2025=100 (2025–2026).
 - U.S. Department of the Treasury. 31 CFR Part 356, Appendix B (the reference CPI of inflation-indexed securities).
 - United Nations, European Commission, IMF, OECD, & World Bank (2009). *System of National Accounts 2008*, chapter 12: Other changes in assets (the revaluation account; nominal, neutral and real holding gains).
+- W3C. Content Security Policy Level 3. https://www.w3.org/TR/CSP3/
+- WHATWG. Fetch Standard: append a request `Origin` header. https://fetch.spec.whatwg.org/#append-a-request-origin-header
 - Zadrozny, B., & Elkan, C. (2001). Obtaining calibrated probability estimates from decision trees and naive Bayesian classifiers. *Proceedings of the 18th International Conference on Machine Learning*, 609–616.

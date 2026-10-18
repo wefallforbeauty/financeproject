@@ -11,8 +11,8 @@ There you find ``ledger.sqlite`` (the ledger, prices and CPI), ``demo.sqlite``
 (the made-up demo household), ``backups/`` and ``output/`` (charts).
 
 Settings live in ``settings.toml`` in the per-user configuration directory
-(``~/.config/financeproject/`` on Linux): the EVDS API key and the number
-format. The EVDS key can also come from the ``EVDS_API_KEY`` environment
+(``~/.config/financeproject/`` on Linux): the EVDS API key, the number format
+and the interface's language and theme. The EVDS key can also come from the ``EVDS_API_KEY`` environment
 variable. ``FINANCEPROJECT_DATA_DIR``, ``FINANCEPROJECT_CONFIG_DIR`` and
 ``FINANCEPROJECT_DB`` (the ledger file) override the locations.
 """
@@ -94,6 +94,21 @@ def number_format() -> str | None:
     """The saved number format (``"1,234.56"`` or ``"1.234,56"``), if any."""
     value = load_settings().get("display", {}).get("number_format")
     return str(value) if value else None
+
+
+def get_setting(section: str, key: str, default: str | None = None) -> str | None:
+    value = load_settings().get(section, {}).get(key)
+    return str(value) if value not in (None, "") else default
+
+
+def language() -> str:
+    """The interface language: ``en`` (default) or ``tr``."""
+    return get_setting("display", "language", "en")
+
+
+def theme() -> str:
+    """The interface theme: ``auto`` (follow the system, default), ``light`` or ``dark``."""
+    return get_setting("display", "theme", "auto")
 
 
 def save_setting(section: str, key: str, value: str) -> Path:

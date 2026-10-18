@@ -4,5 +4,5 @@ Net worth is reported in four units: nominal Turkish lira (the headline unit),
 real lira (deflated by the Turkish CPI), US dollars and grams of gold.
 """
 
-__version__ = "0.3.0"
-VERSION_LABEL = "03"
+__version__ = "0.4.0"
+VERSION_LABEL = "04a"

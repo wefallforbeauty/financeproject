@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Welcome") }}{% endblock %}
+{% block content %}
+<div class="welcome">
+  <h1 class="hero-title">{{ _("Welcome to financeproject") }}</h1>
+  <p class="muted">{{ _("Your household's money in one ledger: accounts, cards, loans, investments, net worth in four units. Everything stays on this computer.") }}</p>
+  <div class="grid two mt">
+    <article class="card">
+      <h2>{{ _("Start your ledger") }}</h2>
+      <p class="small muted">{{ _("It will be created here:") }} <code>{{ own_path }}</code></p>
+      <form method="post" action="/welcome/create"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn primary" type="submit">{{ _("Create my ledger") }}</button></form>
+    </article>
+    <article class="card">
+      <h2>{{ _("Look around first") }}</h2>
+      <p class="small muted">{{ _("A made-up household with a year of transactions, kept in a separate file.") }}</p>
+      {% if demo_exists %}
+      <form method="post" action="/settings/ledger"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="which" value="demo"><button class="btn" type="submit">{{ _("Open the demo household") }}</button></form>
+      {% else %}
+      <div class="actions">
+        <form method="post" action="/settings/demo"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="prices" value="online"><button class="btn" type="submit">{{ _("Build it with real prices") }}</button></form>
+        <form method="post" action="/settings/demo"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="prices" value="offline"><button class="btn ghost" type="submit">{{ _("Offline") }}</button></form>
+      </div>
+      {% endif %}
+      {% include "_job.html" %}
+    </article>
+  </div>
+</div>
+{% endblock %}

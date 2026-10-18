@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import account_options with context %}
+{% block title %}{{ _("Import") }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ _("Import a file") }}</h1><p>{{ _("A bank statement (Excel or HTML), a credit card list (PDF) or a CSV file. You see every line before anything is written.") }}</p></div>
+  <div class="actions"><a class="btn" href="/imports">{{ _("Earlier imports") }}</a></div>
+</header>
+{% if error %}<div class="alerts"><div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text">{{ error }}</div></div></div>{% endif %}
+<div class="grid side">
+<article class="card">
+  <form class="form" method="post" action="/import/preview" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label class="dropzone" data-dropzone>
+      <strong>{{ _("Drop the file here, or choose it") }}</strong>
+      <span class="small">.xlsx · .html · .pdf · .csv</span>
+      <input type="file" name="file" accept=".xlsx,.xls,.ods,.html,.htm,.pdf,.csv,.txt" required>
+      <span class="small" data-file-name></span>
+    </label>
+    <label class="field"><span>{{ _("Into which account?") }}</span>
+      <select name="account">{{ account_options(options.money, data.get('account', ''), True, _("Choose…")) }}</select>
+      <span class="hint">{{ _("For a bank statement, the bank account; for a card list, the credit card.") }}</span>
+    </label>
+    <label class="field"><span>{{ _("Card lists: the card is paid from") }}</span>
+      <select name="payments_from">{{ account_options(options.money, data.get('payments_from', ''), True, _("(not a card list)")) }}</select>
+      <span class="hint">{{ _("The card's payments become transfers from this account, booked once even when its statement shows them too.") }}</span>
+    </label>
+    <label class="check"><input type="checkbox" name="opening" value="1" {% if data.get('opening') == '1' %}checked{% endif %}> {{ _("This is a new account: start it at the balance the statement had before its first line") }}</label>
+    <input type="hidden" name="learn" value="0">
+    <label class="check"><input type="checkbox" name="learn" value="1" {% if data.get('learn', '1') != '0' %}checked{% endif %}> {{ _("Let the learned model suggest categories (rules always apply)") }}</label>
+    <details class="more">
+      <summary>{{ _("CSV options") }}</summary>
+      <div class="row">
+        <label class="field"><span>{{ _("Delimiter") }}</span><select name="delimiter">{% for v, l in [("auto", _("Detect")), (";", ";"), (",", ","), ("tab", _("Tab"))] %}<option value="{{ v }}" {% if data.get('delimiter') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+        <label class="field"><span>{{ _("Decimal separator") }}</span><select name="decimal">{% for v, l in [("auto", _("Detect")), (",", ","), (".", ".")] %}<option value="{{ v }}" {% if data.get('decimal') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+        <label class="field"><span>{{ _("Date format") }}</span><input type="text" name="date_format" value="{{ data.get('date_format', '') }}" placeholder="%d.%m.%Y"></label>
+        <label class="field"><span>{{ _("Lines to skip") }}</span><input type="number" min="0" name="skip" value="{{ data.get('skip', '') }}"></label>
+      </div>
+      <label class="field"><span>{{ _("Column names") }}</span><input type="text" name="columns" value="{{ data.get('columns', '') }}" placeholder="date=Tarih,description=Açıklama,amount=Tutar"></label>
+      <label class="check"><input type="checkbox" name="invert_sign" value="1" {% if data.get('invert_sign') == '1' %}checked{% endif %}> {{ _("Spending is listed as positive amounts") }}</label>
+    </details>
+    <div class="actions"><button class="btn primary" type="submit">{{ _("Preview") }}</button></div>
+  </form>
+</article>
+<article class="card">
+  <h2>{{ _("How it works") }}</h2>
+  <ul class="list small">
+    <li>{{ _("The bank is recognized from the file; a statement must add up line by line with the bank's balances.") }}</li>
+    <li>{{ _("Lines already in the ledger are skipped, so importing the same file again adds nothing.") }}</li>
+    <li>{{ _("Card installments are matched with their purchases; loan installments are split into principal, interest and taxes.") }}</li>
+    <li>{{ _("Before writing, a backup is made, and every import can be undone later.") }}</li>
+    <li>{{ _("Only the transactions are read: the holder's name, address and IBAN are not stored.") }}</li>
+  </ul>
+</article>
+</div>
+{% endblock %}

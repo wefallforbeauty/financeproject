@@ -105,6 +105,7 @@ def test_card_import(cards, fixtures):
     result = import_statement(s, read_statement(path), path, "Sample Card", payments_from="Checking")
     assert result.written and not result.errors
     assert result.added == 10 and result.installment_purchases == 1
+    assert result.uncategorized == 9  # the purchase in installments has no category either
     assert result.covered_installments == 1 and result.older_installments == 1
     how = {r.payee: r.how for r in result.rows}
     assert how["ÖRNEK MOBİLYA"].startswith("installment 2/6 of #")

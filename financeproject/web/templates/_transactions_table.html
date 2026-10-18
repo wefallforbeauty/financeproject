@@ -1,0 +1,32 @@
+{% if f.import_id %}<div class="card-head"><span class="badge accent">{{ _("Added by import #{n}", n=f.import_id) }}</span><a href="/transactions">{{ _("Show all") }}</a></div>{% endif %}
+{% if rows %}
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>{{ _("Date") }}</th><th>{{ _("Description") }}</th><th class="wide-only">{{ _("Account") }}</th><th class="wide-only">{{ _("Category") }}</th><th class="num">{{ _("Amount") }}</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      {% set where = route(r)|join(" → ") %}
+      {% set what %}{% if r.categories %}{% for c in r.categories %}{% if c.endswith(":Uncategorized") %}<span class="badge warning">{{ _("No category") }}</span>{% else %}{{ c|short }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% elif r.legs > 2 %}{{ _("{n} legs", n=r.legs) }}{% else %}{{ _("Transfer") }}{% endif %}{% endset %}
+      <td class="nowrap">{{ r.date.isoformat() }}</td>
+      <td><a class="desc" href="/transactions/{{ r.id }}">{{ r.payee or r.description }}</a>{% if r.payee and r.payee != r.description %}<span class="sub">{{ r.description }}</span>{% endif %}<span class="sub narrow-only">{{ where }} · {{ what }}</span></td>
+      <td class="sub wide-only">{{ where }}</td>
+      <td class="sub wide-only">{{ what }}</td>
+      <td class="num {{ 'in' if r.amount > 0 and r.categories else '' }}">{{ row_amount(r) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<nav class="pager" aria-label="{{ _('Pages') }}">
+  <span>{{ _("{shown} of {total}", shown=rows|length, total=total) }}</span>
+  <span class="actions">
+    {% set query = "&q=" ~ f.q|urlencode ~ "&account=" ~ f.account|urlencode ~ "&start=" ~ f.start ~ "&end=" ~ f.end ~ ("&uncategorized=1" if f.uncategorized else "") ~ ("&import=" ~ f.import_id if f.import_id else "") %}
+    {% if page > 1 %}<a class="btn small" href="/transactions?page={{ page - 1 }}{{ query }}">{{ _("Newer") }}</a>{% endif %}
+    <span>{{ _("Page {page} of {pages}", page=page, pages=pages) }}</span>
+    {% if page < pages %}<a class="btn small" href="/transactions?page={{ page + 1 }}{{ query }}">{{ _("Older") }}</a>{% endif %}
+  </span>
+</nav>
+{% else %}
+<div class="empty"><h2>{{ _("No transactions found") }}</h2><p>{{ _("Change the filters, import a file or add a transaction.") }}</p></div>
+{% endif %}

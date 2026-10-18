@@ -87,6 +87,8 @@ def test_upcoming_lists_loan_installments(household):
     loans = [u for u in items if u.kind == "loan"]
     assert [(u.on, u.note) for u in loans] == [(date(2026, 3, 13), "overdue"), (date(2026, 4, 13), "3 of 24")]
     assert all(u.amount == D("6924.20") and u.direction == -1 for u in loans)
+    # the parts, for an interface that words them itself
+    assert [(u.loan, u.number, u.count, u.late) for u in loans] == [("Car", 2, 24, True), ("Car", 3, 24, False)]
 
 
 # --------------------------------------------------------------------------- commands

@@ -57,7 +57,6 @@ from financeproject.errors import FinanceError
 from financeproject.ledger import accounts as acc_mod
 from financeproject.ledger.db import (
     backup,
-    init_db,
     is_initialised,
     make_engine,
     open_ledger,
@@ -116,6 +115,7 @@ commodity_app = typer.Typer(help="Commodities: currencies, gold, funds, stocks."
 person_app = typer.Typer(help="Account owners (household members).", no_args_is_help=True)
 config_app = typer.Typer(help="Settings: EVDS key, number format.", no_args_is_help=True)
 loan_app = typer.Typer(help="Loans: terms, payment plans, payments.", no_args_is_help=True)
+imports_app = typer.Typer(help="Imported files: list them, undo one.", no_args_is_help=True)
 for sub, name in (
     (account_app, "account"),
     (txn_app, "txn"),
@@ -125,6 +125,7 @@ for sub, name in (
     (person_app, "person"),
     (config_app, "config"),
     (loan_app, "loan"),
+    (imports_app, "imports"),
 ):
     app.add_typer(sub, name=name)
 
@@ -189,6 +190,13 @@ def ledger(ctx: typer.Context) -> Iterator[Session]:
         engine.dispose()
 
 
+def auto_backup(ctx: typer.Context) -> Path:
+    """A backup before a change that is hard to reverse (kept: the newest 20)."""
+    from financeproject.ledger.db import auto_backup as make_auto_backup
+
+    return make_auto_backup(ctx.obj.db_path, config.backup_dir())
+
+
 def table(*columns: str, **kwargs) -> Table:
     """Rich table; a column name ending in '>' is right-aligned (numbers)."""
     t = Table(**kwargs)
@@ -230,22 +238,11 @@ def _check_choice(value: str, choices: tuple[str, ...], option: str) -> str:
 @guarded
 def init(ctx: typer.Context) -> None:
     """Create the ledger (an existing one is left as it is) and load the bundled CPI."""
-    from financeproject.prices.update import load_bundled_cpi
+    from financeproject.ledger.db import create_ledger
 
-    path: Path = ctx.obj.db_path
-    existed = path.exists()
-    engine = make_engine(path)
-    try:
-        if existed and is_initialised(engine):
-            open_ledger(engine)
-        init_db(engine)
-        with session_scope(engine) as s:
-            report = load_bundled_cpi(s)
-    finally:
-        engine.dispose()
-    path.chmod(0o600)
-    console.print(f"[green]Ledger {'already existed' if existed else 'created'}:[/] {path}")
-    for line in report.messages:
+    first, *rest = create_ledger(ctx.obj.db_path)
+    console.print(f"[green]{escape(first.split(':')[0])}:[/]{escape(first.split(':', 1)[1])}")
+    for line in rest:
         console.print(f"  {line}")
     console.print(
         "\nNext steps:\n"
@@ -485,16 +482,7 @@ def account_close(
     """Close an account; its balance must be zero."""
     at = day(on)
     with ledger(ctx) as s:
-        a = acc_mod.find_account(s, account)
-        if account_balance(s, a, at):
-            raise FinanceError(f"The balance of {a.path} is not zero; move it to another account first.")
-        later = s.scalar(
-            select(func.count()).select_from(Posting).join(Transaction).where(Posting.account_id == a.id, Transaction.date > at)
-        )
-        if later:
-            raise FinanceError(f"{a.path} has {later} postings after {at}.")
-        a.closed_on = at
-        path = a.path
+        path = acc_mod.close_account(s, account, at).path
     console.print(f"[green]Closed:[/] {escape(path)} ({at})")
 
 
@@ -688,21 +676,26 @@ def txn_list(
     account: Annotated[Optional[str], typer.Option(help="Only transactions of this account")] = None,
     start: Annotated[Optional[str], typer.Option()] = None,
     end: Annotated[Optional[str], typer.Option()] = None,
+    search: Annotated[
+        Optional[str], typer.Option(help="Text in the description, payee or note (or an amount)")
+    ] = None,
     last: Annotated[int, typer.Option(help="At most this many transactions (the newest)")] = 30,
 ) -> None:
     """List transactions with their postings."""
+    from financeproject.ledger.queries import find_transactions
+
     with ledger(ctx) as s:
-        stmt = select(Transaction).options(selectinload(Transaction.postings).selectinload(Posting.account))
-        if account:
-            a = acc_mod.find_account(s, account)
-            stmt = stmt.where(Transaction.postings.any(Posting.account_id == a.id))
-        if start:
-            stmt = stmt.where(Transaction.date >= parse_date(start))
-        if end:
-            stmt = stmt.where(Transaction.date <= parse_date(end))
-        txs = list(s.scalars(stmt.order_by(Transaction.date.desc(), Transaction.id.desc()).limit(last)))
+        rows, total = find_transactions(
+            s,
+            text=search,
+            account_id=acc_mod.find_account(s, account).id if account else None,
+            start=parse_date(start) if start else None,
+            end=parse_date(end) if end else None,
+            limit=last,
+        )
         t = table("#>", "Date", "Description", "Account", "Amount>", "Unit", "Source")
-        for tx in reversed(txs):
+        for row in reversed(rows):
+            tx = s.get(Transaction, row.id)
             for i, p in enumerate(tx.postings):
                 t.add_row(
                     str(tx.id) if i == 0 else "",
@@ -714,12 +707,72 @@ def txn_list(
                     escape(tx.source) if i == 0 else "",
                 )
         console.print(t)
+        if total > len(rows):
+            console.print(f"[dim]{len(rows)} of {total} shown; --last shows more.[/]")
+
+
+@txn_app.command("edit")
+@guarded
+def txn_edit(
+    ctx: typer.Context,
+    number: Annotated[int, typer.Argument(metavar="ID")],
+    on: Annotated[Optional[str], typer.Option("--date")] = None,
+    description: Annotated[Optional[str], typer.Option()] = None,
+    payee: Annotated[Optional[str], typer.Option(help="'' clears it")] = None,
+    note: Annotated[Optional[str], typer.Option(help="'' clears it")] = None,
+    amount_: Annotated[Optional[str], typer.Option("--amount", help="Simple transactions and transfers: the new amount")] = None,
+    category: Annotated[Optional[str], typer.Option(help="Simple transactions: the income or expense account")] = None,
+    account: Annotated[Optional[str], typer.Option(help="Simple transactions: the asset or liability account")] = None,
+) -> None:
+    """Change a transaction. The change history keeps what it was ('finance txn history ID')."""
+    from financeproject.ledger.transactions import update_transaction
+
+    changes = {
+        key: value
+        for key, value in {
+            "on": parse_date(on) if on else None,
+            "description": description,
+            "payee": payee,
+            "note": note,
+            "amount": amount(amount_) if amount_ else None,
+            "category": category,
+            "account": account,
+        }.items()
+        if value is not None
+    }
+    if not changes:
+        raise FinanceError("Nothing to change: give --date, --description, --payee, --note, --amount, --category or --account.")
+    with ledger(ctx) as s:
+        tx = update_transaction(s, number, **changes)
+        console.print(f"[green]#{tx.id}[/] {tx.date} {escape(tx.description)}")
+
+
+@txn_app.command("history")
+@guarded
+def txn_history(
+    ctx: typer.Context,
+    number: Annotated[Optional[int], typer.Argument(metavar="[ID]", help="One transaction (default: all changes)")] = None,
+    last: Annotated[int, typer.Option(help="At most this many changes")] = 30,
+) -> None:
+    """What was edited, recategorized, deleted, imported or undone, newest first."""
+    from financeproject.ledger.history import history_of, recent_changes
+
+    with ledger(ctx) as s:
+        changes = history_of(s, number)[:last] if number is not None else recent_changes(s, last)
+    if not changes:
+        console.print("No changes recorded yet.")
+        return
+    t = table("When", "Action", "#>", "What")
+    for c in changes:
+        t.add_row(f"{c.at:%Y-%m-%d %H:%M}", c.action, str(c.transaction_id or ""), escape(c.summary))
+    console.print(t)
 
 
 @txn_app.command("delete")
 @guarded
 def txn_delete(ctx: typer.Context, number: Annotated[int, typer.Argument(metavar="ID")]) -> None:
-    """Delete a transaction (cannot be undone; 'finance backup' first is a good idea)."""
+    """Delete a transaction. A backup is made first, and the change history keeps a copy."""
+    auto_backup(ctx)
     with ledger(ctx) as s:
         tx = delete_transaction(s, number)
         console.print(f"[yellow]Deleted:[/] #{number} {tx.date} {escape(tx.description)}")
@@ -810,6 +863,8 @@ def _print_import(result, dry_run: bool) -> None:
             "as no loan has this number. To split installments into principal, interest and taxes, add the loan first: "
             f"finance loan add NAME ACCOUNT … --reference {escape(reference)}"
         )
+    if result.batch_id is not None:
+        console.print(f"[dim]Recorded as import #{result.batch_id}; to undo it: finance imports undo {result.batch_id}[/]")
     check = result.balance_check
     if check is not None:
         ledger_text = "would be" if check.predicted else "is"
@@ -879,6 +934,8 @@ def import_(
         )
         what = "card list" if statement.card else "statement"
         console.print(f"[bold]{escape(statement.bank)}[/] {what}, {period}, {len(statement.lines)} lines{balances}")
+        if not dry_run:
+            auto_backup(ctx)
         with ledger(ctx) as s:
             result = import_statement(
                 s,
@@ -907,6 +964,8 @@ def import_(
         skip_rows=skip,
         invert_sign=invert_sign,
     )
+    if not dry_run:
+        auto_backup(ctx)
     with ledger(ctx) as s:
         result = import_csv(s, file, fmt, account=account, dry_run=dry_run, use_model=learn, min_confidence=min_confidence)
         _print_import(result, dry_run)
@@ -964,6 +1023,38 @@ def rule_apply(ctx: typer.Context) -> None:
         console.print(f"[green]{len(moved)} transactions categorized.[/]")
 
 
+@imports_app.command("list")
+@guarded
+def imports_list(ctx: typer.Context, last: Annotated[int, typer.Option(help="At most this many")] = 30) -> None:
+    """Imported files: when, into which account, how many transactions, and whether undone."""
+    from financeproject.ingest.importer import import_views
+
+    with ledger(ctx) as s:
+        views = import_views(s, last)
+    if not views:
+        console.print("No imports recorded yet.")
+        return
+    t = table("#>", "When", "File", "Account", "Added>", "Still in>", "Edited since>", "Undone")
+    for v in views:
+        t.add_row(
+            str(v.id), f"{v.at:%Y-%m-%d %H:%M}", escape(v.file_name), escape(v.account or "(per row)"), str(v.added),
+            str(v.left), str(v.edited), f"{v.undone_at:%Y-%m-%d %H:%M}" if v.undone_at else "",
+        )
+    console.print(t)
+
+
+@imports_app.command("undo")
+@guarded
+def imports_undo(ctx: typer.Context, number: Annotated[int, typer.Argument(metavar="ID")]) -> None:
+    """Delete the transactions an import added (a backup is made first)."""
+    from financeproject.ingest.importer import undo_import
+
+    auto_backup(ctx)
+    with ledger(ctx) as s:
+        count = undo_import(s, number)
+    console.print(f"[yellow]Import #{number} undone:[/] {count} transactions deleted.")
+
+
 # --------------------------------------------------------------------------- prices and CPI
 
 
@@ -978,44 +1069,17 @@ def price_update(
     """Download TCMB exchange rates, gold (Frankfurter), the CPI, fund prices (TEFAS) and share prices
     (Yahoo Finance); fills in missing days."""
     from financeproject.prices.http import make_client
-    from financeproject.prices.update import (
-        UpdateReport,
-        tcmb_currencies,
-        update_cpi,
-        update_fx,
-        update_gold,
-        update_tefas,
-        update_yahoo,
-    )
+    from financeproject.prices.update import SOURCES, update_all, update_range
 
     if only is not None:
-        _check_choice(only, ("fx", "gold", "cpi", "tefas", "yahoo"), "--only")
+        _check_choice(only, SOURCES, "--only")
     today = date.today()
-    key = config.evds_api_key()
     with ledger(ctx) as s:
-        first, _ = transaction_date_range(s)
-        start_day = parse_date(start) if start else (first or today - timedelta(days=30))
-        end_day = parse_date(end) if end else today
-        if end_day < start_day:
-            raise FinanceError("The end date is before the start date.")
-        report = UpdateReport()
+        start_day, end_day = update_range(s, parse_date(start) if start else None, parse_date(end) if end else None, today)
         with make_client() as client, console.status("Downloading prices…") as progress:
-            if only in (None, "fx"):
-                report.merge(update_fx(s, client, start_day, end_day, tcmb_currencies(s), key, progress=progress.update))
-                s.commit()
-            if only in (None, "gold"):
-                report.merge(update_gold(s, client, start_day, end_day, progress=progress.update))
-                s.commit()
-            if only in (None, "cpi"):
-                progress.update("CPI")
-                report.merge(update_cpi(s, client, key, today))
-                s.commit()
-            if only in (None, "tefas"):
-                report.merge(update_tefas(s, client, start_day, end_day, today, progress=progress.update))
-                s.commit()
-            if only in (None, "yahoo"):
-                report.merge(update_yahoo(s, client, start_day, end_day, today, progress=progress.update))
-                s.commit()
+            report = update_all(
+                s, client, start_day, end_day, only=only, api_key=config.evds_api_key(), today=today, progress=progress.update
+            )
     for line in report.messages:
         console.print(f"  {line}")
     for line in report.warnings[:20]:
@@ -1304,6 +1368,34 @@ def chart(
     console.print(f"[green]Chart:[/] {target}")
 
 
+# --------------------------------------------------------------------------- the web interface
+
+
+@app.command()
+@guarded
+def ui(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option(help="The port to use (another free one if it is taken)")] = 8765,
+    browser: Annotated[bool, typer.Option(help="Open the browser")] = True,
+    stop: Annotated[bool, typer.Option("--stop", help="Stop the running interface")] = False,
+    shortcut: Annotated[bool, typer.Option("--shortcut", help="Make a desktop shortcut that opens the interface, then exit")] = False,
+) -> None:
+    """Open the interface in your browser. It runs on this computer only; stop it with Ctrl+C or from Settings."""
+    from financeproject.web import server
+
+    if stop:
+        console.print("[green]The interface was stopped.[/]" if server.stop() else "The interface was not running.")
+        return
+    if shortcut:
+        from financeproject.web.shortcut import create_shortcut
+
+        made = create_shortcut(ctx.obj.db_path if ctx.obj.explicit else None)
+        for path in made:
+            console.print(f"[green]Shortcut:[/] {escape(str(path))}")
+        return
+    server.serve(ctx.obj.db_path, port=port, open_browser=browser, echo=console.print)
+
+
 # --------------------------------------------------------------------------- backup and demo
 
 
@@ -1331,54 +1423,25 @@ def demo(
     overwrite: Annotated[bool, typer.Option(help="Delete an existing demo ledger and build it again")] = False,
 ) -> None:
     """Build a separate demo ledger with a made-up household (your own ledger is not touched)."""
-    from financeproject.demo import SYNTHETIC_SOURCE, build_demo, synthetic_prices
-    from financeproject.prices.http import make_client
-    from financeproject.prices.update import load_bundled_cpi, update_fx, update_gold
-    from financeproject.reports.context import load_market_data
+    from financeproject.demo import create_demo_ledger
 
-    real_ledger = config.default_db_path().resolve()
     path: Path = ctx.obj.db_path if ctx.obj.explicit else config.demo_db_path()
-    if path.resolve() == real_ledger:
-        raise FinanceError("Demo data never goes into your real ledger; give another --db.")
-    if path.exists():
-        if not overwrite:
-            raise FinanceError(f"{path} already exists. Use --overwrite to build it again.")
-        path.unlink()
+    if path.exists() and not overwrite and path.resolve() != config.default_db_path().resolve():
+        raise FinanceError(f"{path} already exists. Use --overwrite to build it again.")
     end_day = day(end)
     start_day = parse_date(start) if start else add_months(month_start(end_day), -12)
-    engine = make_engine(path)
-    try:
-        init_db(engine)
-        with session_scope(engine) as s:
-            load_bundled_cpi(s)
-            source = "made up"
-            if not synthetic:
-                try:
-                    with make_client() as client, console.status("Downloading real exchange rates and gold prices…") as st:
-                        update_fx(
-                            s, client, start_day - timedelta(days=7), end_day, ["USD"], config.evds_api_key(),
-                            pause=0.1, progress=st.update,
-                        )
-                        update_gold(s, client, start_day - timedelta(days=7), end_day, progress=st.update)
-                    source = "TCMB + Frankfurter"
-                except (httpx.HTTPError, FinanceError) as exc:
-                    err.print(f"[yellow]Download failed ({escape(str(exc))}); using made-up prices.[/]")
-                    s.rollback()
-                    load_bundled_cpi(s)
-                    synthetic = True
-            if synthetic:
-                for q in synthetic_prices(start_day - timedelta(days=7), end_day):
-                    upsert_price(s, q.commodity, q.quote, q.on, q.value, SYNTHETIC_SOURCE)
-            s.flush()
-            market = load_market_data(s)
-            summary = build_demo(s, start_day, end_day, market.book, market.deflator)
-    finally:
-        engine.dispose()
-    path.chmod(0o600)
+    with console.status("Building the demo household…") as status:
+        made = create_demo_ledger(
+            path, start_day, end_day, synthetic=synthetic, api_key=config.evds_api_key(), overwrite=overwrite,
+            progress=status.update,
+        )
+    if made.warning:
+        err.print(f"[yellow]{escape(made.warning)}[/]")
+    summary = made.summary
     console.print(
         f"[green]Demo ledger:[/] {path}\n  {summary.start} – {summary.end}, {summary.transactions} transactions, "
-        f"prices: {source}\nTo look at it:\n  finance -d \"{path}\" balance-sheet\n  finance -d \"{path}\" networth\n"
-        f"  finance -d \"{path}\" chart"
+        f"prices: {made.prices}\nTo look at it:\n  finance -d \"{path}\" ui\n  finance -d \"{path}\" balance-sheet\n"
+        f"  finance -d \"{path}\" networth"
     )
 
 
@@ -1456,8 +1519,10 @@ def categorize(
                 )
             console.print(t)
         if not dry_run:
+            from financeproject.ledger.transactions import move_posting
+
             for _, posting, rule in matches:
-                posting.account = rule.account
+                move_posting(s, posting, rule.account)
             learn.apply(s, suggestions)
         left = s.scalar(
             select(func.count())
