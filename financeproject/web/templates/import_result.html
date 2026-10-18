@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Import") }} · {{ file_name }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ file_name }}</h1><p>{{ result.source }}</p></div></header>
+{% if result.errors %}
+<div class="alerts">
+  <div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text"><strong>{{ _("Nothing was written:") }}</strong>
+    <ul>{% for e in result.errors[:30] %}<li>{{ e }}</li>{% endfor %}</ul></div></div>
+</div>
+<div class="actions"><a class="btn" href="/import">{{ _("Back to import") }}</a></div>
+{% else %}
+<article class="card">
+  <h2>{% if result.added %}{{ _.n("{n} transaction added.", "{n} transactions added.", result.added) }}{% else %}{{ _("Nothing new: every line was already in the ledger.") }}{% endif %}</h2>
+  <ul class="list">
+    {% if result.duplicates %}<li><span>{{ _("Already in the ledger") }}</span><span class="num">{{ result.duplicates }}</span></li>{% endif %}
+    {% if result.uncategorized %}<li><span>{{ _("Without a category") }}</span><span class="num">{{ result.uncategorized }}</span></li>{% endif %}
+    {% if result.learned %}<li><span>{{ _("Categorized by the learned model") }}</span><span class="num">{{ result.learned }}</span></li>{% endif %}
+    {% if result.loan_payments %}<li><span>{{ _("Loan installments split into principal, interest and taxes") }}</span><span class="num">{{ result.loan_payments }}</span></li>{% endif %}
+    {% if result.installment_purchases %}<li><span>{{ _("Installment purchases booked in full with their plans") }}</span><span class="num">{{ result.installment_purchases }}</span></li>{% endif %}
+    {% if result.covered_installments %}<li><span>{{ _("Card installments of purchases already in the ledger") }}</span><span class="num">{{ result.covered_installments }}</span></li>{% endif %}
+    {% if result.matched_transfers %}<li><span>{{ _("Transfers the ledger already had from the other account") }}</span><span class="num">{{ result.matched_transfers }}</span></li>{% endif %}
+    {% if result.older_installments %}<li><span>{{ _("Installments of purchases made before the ledger, booked one by one") }}</span><span class="num">{{ result.older_installments }}</span></li>{% endif %}
+    {% if result.opening %}<li><span>{{ _("Opening balance on {on}", on=result.opening[0].isoformat()) }}</span><span class="num">{{ money(result.opening[1]) }}</span></li>{% endif %}
+  </ul>
+  {% for reference, lines in result.unknown_loans.items() %}
+  <div class="alert warning mt"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _.n("Loan {ref}: {n} installment line went to a category, as no loan has this number. Add the loan with this number to have it split: finance loan add … --reference {ref}", "Loan {ref}: {n} installment lines went to a category, as no loan has this number. Add the loan with this number to have them split: finance loan add … --reference {ref}", lines, ref=reference) }}</div></div>
+  {% endfor %}
+  {% set check = result.balance_check %}
+  {% if check %}
+  <div class="alert {{ 'ok' if check.ok else 'critical' }} mt"><span class="icon" aria-hidden="true">{{ "✓" if check.ok else "!" }}</span><div class="text">
+    {% if check.ok %}{{ _("Balance check: the bank's balance on {on} is {bank}; the ledger's is the same.", on=check.on.isoformat(), bank=money(check.bank)) }}
+    {% else %}{{ _("Balance check: the bank's balance on {on} is {bank}, the ledger's {ledger} (difference {difference}). Missing transactions, or an opening balance to enter?", on=check.on.isoformat(), bank=money(check.bank), ledger=money(check.ledger), difference=money(check.difference)) }}{% endif %}
+  </div></div>
+  {% endif %}
+  <div class="actions mt">
+    {% if result.batch_id %}<a class="btn" href="/transactions?import={{ result.batch_id }}">{{ _("See them") }}</a>{% endif %}
+    {% if result.uncategorized %}<a class="btn primary" href="/categorize">{{ _("Categorize") }}</a>{% endif %}
+    {% if result.batch_id %}
+    <form method="post" action="/imports/{{ result.batch_id }}/undo" data-confirm="{{ _('Undo this import and delete the transactions it added?') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn danger" type="submit">{{ _("Undo this import") }}</button>
+    </form>
+    {% endif %}
+  </div>
+</article>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="empty">
+    <h2>{{ title }}</h2>
+    <p>{{ message }}</p>
+    <div class="actions center"><a class="btn" href="/" data-back>{{ _("Back") }}</a><a class="btn primary" href="/">{{ _("Overview") }}</a></div>
+  </div>
+</div>
+{% endblock %}

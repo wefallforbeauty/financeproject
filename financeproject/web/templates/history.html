@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ _("History") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("History") }}</h1><p>{{ _("What was edited, recategorized, deleted, imported or undone, newest first.") }}</p></div></header>
+<div class="card flush">
+{% if changes %}
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>{{ _("When") }}</th><th>{{ _("What") }}</th><th>{{ _("Details") }}</th></tr></thead>
+  <tbody>
+  {% for c in changes %}
+    <tr>
+      <td class="nowrap">{{ local_time(c.at) }}</td>
+      <td><span class="badge {{ 'critical' if c.action in ('delete', 'undo import') else 'accent' if c.action == 'import' else '' }}">{{ action_label(c.action) }}</span></td>
+      <td>{% if c.transaction_id and c.action != "delete" %}<a href="/transactions/{{ c.transaction_id }}">{{ c.summary }}</a>{% elif c.import_id %}<a href="/imports">{{ c.summary }}</a>{% else %}{{ c.summary }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if page > 1 or more %}
+<nav class="pager" aria-label="{{ _('Pages') }}">
+  <span>{% if page > 1 %}<a class="btn small" href="/history?page={{ page - 1 }}">{{ _("Newer") }}</a>{% endif %}</span>
+  <span>{% if more %}<a class="btn small" href="/history?page={{ page + 1 }}">{{ _("Older") }}</a>{% endif %}</span>
+</nav>
+{% endif %}
+{% else %}
+<div class="empty"><h2>{{ _("No changes yet") }}</h2><p>{{ _("Edits, deletions and imports will be listed here.") }}</p></div>
+{% endif %}
+</div>
+{% endblock %}

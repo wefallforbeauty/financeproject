@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Settings") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Settings") }}</h1></div></header>
+<div class="grid two">
+  <article class="card" id="display">
+    <h2>{{ _("Display") }}</h2>
+    <form class="form" method="post" action="/settings/display">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="field"><span>{{ _("Language") }}</span>
+        <select name="language">{% for key, name in languages.items() %}<option value="{{ key }}" {% if lang == key %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+        <span class="hint">{{ _("Messages from the program's core stay in English.") }}</span></label>
+      <label class="field"><span>{{ _("Theme") }}</span>
+        <select name="theme">{% for key, name in [("auto", _("Like the system")), ("light", _("Light")), ("dark", _("Dark"))] %}<option value="{{ key }}" {% if theme == key %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+      <label class="field"><span>{{ _("Numbers") }}</span>
+        <select name="number_format">{% for f in number_formats %}<option value="{{ f }}" {% if number_format == f %}selected{% endif %}>{{ f }}</option>{% endfor %}</select></label>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Save") }}</button></div>
+    </form>
+  </article>
+
+  <article class="card" id="prices">
+    <h2>{{ _("Prices") }}</h2>
+    <p class="small muted">{{ _("Exchange rates (TCMB), gold, the CPI, fund prices (TEFAS) and share prices (Yahoo Finance). Only fund and share codes are sent.") }}</p>
+    {% if price_dates %}
+    <ul class="list small">{% for source, last in price_dates %}<li><span>{{ source }}</span><span class="num">{{ last.isoformat() }}</span></li>{% endfor %}</ul>
+    {% else %}<p class="muted">{{ _("No prices yet.") }}</p>{% endif %}
+    <form method="post" action="/settings/prices" class="mt">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="btn primary" type="submit" {% if job and job.running %}disabled{% endif %}>{{ _("Update prices now") }}</button>
+    </form>
+    {% include "_job.html" %}
+  </article>
+
+  <article class="card" id="ledger">
+    <h2>{{ _("Ledger") }}</h2>
+    <dl class="kv">
+      <dt>{{ _("In use") }}</dt><dd>{{ ledger_path }}{% if demo %} <span class="badge demo">{{ _("Demo") }}</span>{% endif %}</dd>
+      <dt>{{ _("Yours") }}</dt><dd>{{ own_path }}</dd>
+      <dt>{{ _("Demo") }}</dt><dd>{{ demo_path }}{% if not demo_exists %} ({{ _("not built") }}){% endif %}</dd>
+    </dl>
+    <div class="actions mt">
+      {% if demo %}
+      <form method="post" action="/settings/ledger"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="which" value="own"><button class="btn primary" type="submit">{{ _("Back to my ledger") }}</button></form>
+      {% elif demo_exists %}
+      <form method="post" action="/settings/ledger"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="which" value="demo"><button class="btn" type="submit">{{ _("Look at the demo household") }}</button></form>
+      {% endif %}
+    </div>
+    <details class="more mt">
+      <summary>{{ _("Build the demo household again") }}</summary>
+      <p class="small muted">{{ _("A made-up household with a year of transactions, in its own file. Your ledger is not touched.") }}</p>
+      <div class="actions">
+        <form method="post" action="/settings/demo" data-confirm="{{ _('Build the demo again? The old demo file is replaced.') }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="prices" value="online"><button class="btn" type="submit">{{ _("With real prices (needs the internet)") }}</button></form>
+        <form method="post" action="/settings/demo" data-confirm="{{ _('Build the demo again? The old demo file is replaced.') }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="prices" value="offline"><button class="btn" type="submit">{{ _("Offline, with made-up prices") }}</button></form>
+      </div>
+    </details>
+  </article>
+
+  <article class="card" id="backups">
+    <h2>{{ _("Backups") }}</h2>
+    <p class="small muted">{{ _("A backup is made by itself before imports, undoing them and deletions (the newest 20 are kept).") }}</p>
+    <form method="post" action="/settings/backup"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn" type="submit">{{ _("Back up now") }}</button></form>
+    {% if backups %}
+    <ul class="list small mt">{% for b in backups[:10] %}<li><a href="/settings/backups/{{ b.name|urlencode }}">{{ b.name }}</a><span class="num">{{ "%.0f"|format(b.stat().st_size / 1024) }} KB</span></li>{% endfor %}</ul>
+    {% endif %}
+  </article>
+
+  <article class="card" id="evds">
+    <h2>{{ _("EVDS key") }}</h2>
+    <p class="small muted">{{ _("Optional. With a key from evds3.tcmb.gov.tr the CPI comes as official index levels, and past exchange rates in one request.") }}</p>
+    <form class="form inline" method="post" action="/settings/evds">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="field"><span>{{ _("Key") }}</span><input type="password" name="key" autocomplete="off" placeholder="{{ _('saved') if evds else _('not set') }}"></label>
+      <button class="btn" type="submit">{{ _("Save") }}</button>
+    </form>
+    {% if evds %}<form method="post" action="/settings/evds" class="mt"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="key" value=""><button class="btn ghost" type="submit">{{ _("Remove the key") }}</button></form>{% endif %}
+  </article>
+
+  <article class="card" id="shortcut">
+    <h2>{{ _("Desktop shortcut") }}</h2>
+    <p class="small muted">{{ _("An icon on the desktop and in the application menu that starts the interface and opens the browser.") }}</p>
+    <form method="post" action="/settings/shortcut"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn" type="submit">{{ _("Create the shortcut") }}</button></form>
+  </article>
+
+  <article class="card" id="about">
+    <h2>{{ _("About") }}</h2>
+    <dl class="kv">
+      <dt>{{ _("Version") }}</dt><dd>{{ version }} ({{ package_version }})</dd>
+      <dt>{{ _("Data folder") }}</dt><dd>{{ data_dir }}</dd>
+      <dt>Python</dt><dd>{{ python }}</dd>
+    </dl>
+    <p class="small muted mt">{{ _("The interface runs on this computer only. Stopping it closes this page; open it again with finance ui or the shortcut.") }}</p>
+    <form method="post" action="/quit" data-confirm="{{ _('Stop the interface?') }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn danger" type="submit">{{ _("Stop the interface") }}</button></form>
+  </article>
+</div>
+{% endblock %}

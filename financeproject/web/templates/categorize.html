@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_macros.html" import category_choices with context %}
+{% block title %}{{ _("Categorize") }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ _("Categorize") }}</h1>
+    <p>{% if total %}{{ _.n("{n} transaction without a category. A rule's or the learned model's suggestion is chosen already; save it or pick another.", "{n} transactions without a category. A rule's or the learned model's suggestion is chosen already; save it or pick another.", total) }}{% else %}{{ _("Every transaction has a category.") }}{% endif %}</p>
+  </div>
+  {% if confident %}
+  <form method="post" action="/categorize/accept" data-confirm="{{ _.n('Accept the suggestion that comes from a rule or reaches 80%?', 'Accept the {n} suggestions that come from a rule or reach 80%?', confident) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button class="btn primary" type="submit">{{ _.n("Accept {n} confident suggestion", "Accept {n} confident suggestions", confident) }}</button>
+  </form>
+  {% endif %}
+</header>
+{% if items %}
+<div class="card flush">
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>{{ _("Date") }}</th><th>{{ _("Description") }}</th><th class="num">{{ _("Amount") }}</th><th class="wide-only">{{ _("Suggestion") }}</th><th>{{ _("Category") }}</th></tr></thead>
+  <tbody>
+  {% for item in items %}
+    {% set tx = item.transaction %}
+    {% set chosen = item.suggestion.path if item.suggestion else "" %}
+    <tr>
+      <td class="nowrap">{{ tx.date.isoformat() }}</td>
+      <td><a class="desc" href="/transactions/{{ tx.id }}">{{ tx.payee or tx.description }}</a><span class="sub">{% if tx.payee and tx.payee != tx.description %}{{ tx.description }} · {% endif %}{{ item.account.path|short if item.account else "" }}</span></td>
+      <td class="num {{ 'in' if item.amount > 0 else '' }}">{{ money(item.amount) }}</td>
+      <td class="wide-only">
+        {% if item.suggestion %}{{ item.suggestion.path|short }}
+          {% if item.confidence is none %}<span class="badge accent">{{ _("rule") }}</span>
+          {% else %}<span class="badge {{ 'accent' if item.confident else '' }}">{{ percent(item.confidence) }}</span>{% endif %}
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td>
+        <form class="form inline" method="post" action="/categorize/{{ tx.id }}" hx-post="/categorize/{{ tx.id }}" hx-target="closest tr" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <select name="account" required aria-label="{{ _('Category for {what}', what=tx.payee or tx.description) }}">
+            {% if not chosen %}<option value="">{{ _("Choose…") }}</option>{% endif %}
+            {{ category_choices(options, item.amount, chosen, skip_uncategorized=True) }}
+          </select>
+          <button class="btn small primary" type="submit">{{ _("Save") }}</button>
+        </form>
+        <details class="more mt-small">
+          <summary>{{ _("Make a rule") }}</summary>
+          <form class="form inline" method="post" action="/categorize/rule">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <label class="field"><span>{{ _("When the description has") }}</span><input type="text" name="pattern" value="{{ pattern(tx) }}" required></label>
+            <label class="field"><span>{{ _("put it into") }}</span>
+              <select name="account" required>{{ category_choices(options, item.amount, chosen, skip_uncategorized=True) }}</select>
+            </label>
+            <button class="btn small" type="submit">{{ _("Add the rule") }}</button>
+          </form>
+        </details>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if total > items|length %}<p class="pager">{{ _("{shown} of {total} shown; save some to see the rest.", shown=items|length, total=total) }}</p>{% endif %}
+</div>
+{% else %}
+<div class="card"><div class="empty"><h2>{{ _("Nothing to categorize") }}</h2><p>{{ _("New imports with lines no rule or the model could place will show up here.") }}</p></div></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,10 @@
+<div id="job" {% if job and job.running %}hx-get="/jobs/current" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
+{% if job %}
+  <div class="job" role="status">
+    <strong>{{ job.name }}</strong>
+    {% if job.running %}<span class="spinner" aria-hidden="true"></span> {{ _("running") }}{% if job.last %}: {{ job.last }}{% endif %}
+    {% elif job.status == "done" %}<span class="badge good">✓ {{ _("done") }}</span> <a href="/">{{ _("Open the overview") }}</a><pre>{{ job.result }}</pre>
+    {% else %}<span class="badge critical">{{ _("failed") }}</span><pre>{{ job.error }}</pre>{% endif %}
+  </div>
+{% endif %}
+</div>

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "_macros.html" import account_options with context %}
+{% block title %}{{ _("Transactions") }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ _("Transactions") }}</h1><p>{{ _("Search by text or amount; filter by account, category or dates.") }}</p></div>
+  <div class="actions"><a class="btn primary" href="/transactions/new">{{ _("Add a transaction") }}</a></div>
+</header>
+<form class="filters" method="get" action="/transactions" role="search"
+      hx-get="/transactions" hx-target="#tx-results" hx-push-url="true" hx-indicator="#tx-results"
+      hx-trigger="input changed delay:300ms from:input[type=search], change">
+  <label class="field"><span>{{ _("Search") }}</span><input type="search" name="q" value="{{ f.q }}" placeholder="{{ _('Shop, description, note or amount') }}" autocomplete="off"></label>
+  <label class="field"><span>{{ _("Account or category") }}</span>
+    <select name="account">
+      <option value="">{{ _("All") }}</option>
+      <optgroup label="{{ _('Accounts') }}">{{ account_options(options.money, f.account) }}</optgroup>
+      <optgroup label="{{ _('Categories') }}">{{ account_options(options.categories, f.account) }}</optgroup>
+    </select>
+  </label>
+  <label class="field"><span>{{ _("Since") }}</span><input type="date" name="start" value="{{ f.start }}"></label>
+  <label class="field"><span>{{ _("Until") }}</span><input type="date" name="end" value="{{ f.end }}"></label>
+  <label class="check"><input type="checkbox" name="uncategorized" value="1" {% if f.uncategorized %}checked{% endif %}> {{ _("Without a category") }}</label>
+  {% if f.import_id %}<input type="hidden" name="import" value="{{ f.import_id }}">{% endif %}
+  <noscript><button class="btn" type="submit">{{ _("Filter") }}</button></noscript>
+</form>
+<div id="tx-results" class="card flush loading-dim">
+  {% include "_transactions_table.html" %}
+</div>
+{% endblock %}

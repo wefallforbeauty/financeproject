@@ -396,7 +396,7 @@ def shape(tx: Transaction) -> str:
     return OTHER
 
 
-def _sides(tx: Transaction) -> tuple[Posting, Posting]:
+def sides(tx: Transaction) -> tuple[Posting, Posting]:
     """The balance-sheet leg and the category leg of a simple transaction."""
     a, b = tx.postings
     return (a, b) if a.account.type in (ASSET, LIABILITY) else (b, a)
@@ -495,7 +495,7 @@ def _apply_update(session: Session, tx: Transaction, on, description, payee, not
             "Delete it and enter it again."
         )
     if kind == SIMPLE:
-        own, cat = _sides(tx)
+        own, cat = sides(tx)
         if account is not _KEEP:
             target = _balance_sheet_account(session, account, "The account")
             if tx.installment_plan is not None and target.id != own.account_id:

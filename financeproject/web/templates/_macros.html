@@ -1,0 +1,20 @@
+{% macro account_options(options, selected="", include_blank=False, blank_label="") -%}
+  {% if include_blank %}<option value="">{{ blank_label }}</option>{% endif %}
+  {% for o in options %}<option value="{{ o.value }}" {% if o.value == selected %}selected{% endif %}>{{ o.label }}{% if o.commodity and o.commodity != "TRY" %} ({{ o.commodity }}){% endif %}</option>{% endfor %}
+{%- endmacro %}
+
+{% macro category_options(choices, selected="") -%}
+  <optgroup label="{{ _('Expenses') }}">{% for o in choices.expense %}<option value="{{ o.value }}" {% if o.value == selected %}selected{% endif %}>{{ o.label }}</option>{% endfor %}</optgroup>
+  <optgroup label="{{ _('Income') }}">{% for o in choices.income %}<option value="{{ o.value }}" {% if o.value == selected %}selected{% endif %}>{{ o.label }}</option>{% endfor %}</optgroup>
+{%- endmacro %}
+
+{% macro category_choices(choices, amount, selected="", skip_uncategorized=False) -%}
+  {%- set groups = [(_("Expenses"), choices.expense), (_("Income"), choices.income)] -%}
+  {%- for label, options in (groups if amount < 0 else groups|reverse) %}
+  <optgroup label="{{ label }}">{% for o in options %}{% if not (skip_uncategorized and o.value.endswith(":Uncategorized")) %}<option value="{{ o.value }}" {% if o.value == selected %}selected{% endif %}>{{ o.label }}</option>{% endif %}{% endfor %}</optgroup>
+  {%- endfor %}
+{%- endmacro %}
+
+{% macro amount_cell(value, commodity, money, inflow=False) -%}
+  <td class="num {{ 'in' if inflow else '' }}">{{ money(value) }}{% if commodity and commodity != "TRY" %} {{ commodity }}{% endif %}</td>
+{%- endmacro %}

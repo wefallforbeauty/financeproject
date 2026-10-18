@@ -272,13 +272,13 @@ def find_transactions(
 __all__ = [
     "SHARED_OWNER",
     "TransactionRow",
-    "balances_by_account",
-    "find_transactions",
-    "uncategorized_count",
     "account_balance",
+    "balances_by_account",
     "commodity_totals",
+    "find_transactions",
     "positions_at",
     "positions_over_time",
     "to_position",
     "transaction_date_range",
+    "uncategorized_count",
 ]

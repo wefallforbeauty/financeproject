@@ -141,3 +141,25 @@ def auto_backup(db_path: Path, target_dir: Path, keep: int = AUTO_KEEP) -> Path:
     for extra in old[:-keep]:
         extra.unlink(missing_ok=True)
     return target
+
+
+def create_ledger(path: Path) -> list[str]:
+    """Create the ledger at ``path`` (an existing one is checked and kept) and load the bundled CPI.
+
+    The file is made readable only by the user. Returns what was done.
+    """
+    from financeproject.prices.update import load_bundled_cpi
+
+    path = Path(path)
+    existed = path.exists()
+    engine = make_engine(path)
+    try:
+        if existed and is_initialised(engine):
+            open_ledger(engine)
+        init_db(engine)
+        with session_scope(engine) as s:
+            report = load_bundled_cpi(s)
+    finally:
+        engine.dispose()
+    path.chmod(0o600)
+    return [f"Ledger {'already existed' if existed else 'created'}: {path}", *report.messages]

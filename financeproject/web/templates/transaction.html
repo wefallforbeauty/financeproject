@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_macros.html" import account_options, category_options with context %}
+{% block title %}#{{ tx.id }} {{ tx.description }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ tx.payee or tx.description }}</h1>
+    <p>#{{ tx.id }} · {{ tx.date.isoformat() }}{% if tx.payee and tx.payee != tx.description %} · {{ tx.description }}{% endif %}</p>
+  </div>
+  <div class="actions"><a class="btn" href="/transactions">{{ _("All transactions") }}</a></div>
+</header>
+{% if error %}<div class="alerts"><div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text">{{ error }}</div></div></div>{% endif %}
+<div class="grid side">
+  <div>
+    <article class="card">
+      <h2>{{ _("Legs") }}</h2>
+      <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>{{ _("Account") }}</th><th class="num">{{ _("Amount") }}</th><th>{{ _("Unit") }}</th></tr></thead>
+        <tbody>
+        {% for p in tx.postings %}<tr><td><a href="/accounts/{{ p.account.id }}">{{ p.account.path }}</a></td><td class="num">{{ money(p.amount, 6 if p.commodity_code not in ("TRY", "USD", "EUR") else 2) }}</td><td>{{ p.commodity_code }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <dl class="kv mt">
+        <dt>{{ _("Source") }}</dt><dd>{{ _("entered by hand") if tx.source == "manual" else tx.source }}</dd>
+        {% if batch %}<dt>{{ _("Import") }}</dt><dd><a href="/transactions?import={{ batch.id }}">#{{ batch.id }} {{ batch.file_name }}</a>{% if batch.undone_at %} ({{ _("undone") }}){% endif %}</dd>{% endif %}
+        <dt>{{ _("Entered") }}</dt><dd>{{ local_time(tx.created_at) }}</dd>
+        {% if loan %}<dt>{{ _("Loan") }}</dt><dd>{{ loan.loan.name }}{% if loan.number %} · {{ _("installment {n}", n=loan.number) }}{% endif %}</dd>{% endif %}
+      </dl>
+      {% if plan %}
+      <h3 class="mt">{{ _("Installment plan") }}</h3>
+      <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>{{ _("Installment") }}</th><th>{{ _("Month") }}</th><th class="num">{{ _("Amount") }}</th></tr></thead>
+        <tbody>{% for i in plan %}<tr><td>{{ i.number }}/{{ i.count }}</td><td>{{ i.month.strftime("%Y-%m") }}</td><td class="num">{{ money(i.amount) }}</td></tr>{% endfor %}</tbody>
+      </table>
+      </div>
+      {% endif %}
+    </article>
+
+    <article class="card mt">
+      <h2>{{ _("Change it") }}</h2>
+      <form class="form" method="post" action="/transactions/{{ tx.id }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <div class="row">
+          <label class="field"><span>{{ _("Date") }}</span><input type="date" name="date" value="{{ form.get('date', tx.date.isoformat()) }}" required></label>
+          {% if kind in ("simple", "transfer") %}
+          <label class="field"><span>{{ _("Amount") }}</span><input type="text" inputmode="decimal" name="amount" value="{{ form.get('amount', money(tx.postings[0].amount|abs)) }}" required></label>
+          {% endif %}
+        </div>
+        <label class="field"><span>{{ _("Description") }}</span><input type="text" name="description" value="{{ form.get('description', tx.description) }}" required></label>
+        <label class="field"><span>{{ _("Payee") }}</span><input type="text" name="payee" value="{{ form.get('payee', tx.payee or '') }}"></label>
+        {% if kind == "simple" %}
+        <div class="row">
+          <label class="field"><span>{{ _("Category") }}</span><select name="category">{{ category_options(options, form.get('category', cat.account.path)) }}</select></label>
+          <label class="field"><span>{{ _("Account") }}</span><select name="account">{{ account_options(options.money, form.get('account', own.account.path)) }}</select></label>
+        </div>
+        {% elif kind == "other" %}
+        <p class="small muted">{{ _("This transaction has more than two legs (an exchange or a loan payment, for example): only its date, description, payee and note can change. To change the rest, delete it and enter it again.") }}</p>
+        {% endif %}
+        <label class="field"><span>{{ _("Note") }}</span><textarea name="note">{{ form.get('note', tx.note or '') }}</textarea></label>
+        <div class="actions"><button class="btn primary" type="submit">{{ _("Save") }}</button></div>
+      </form>
+    </article>
+
+    <article class="card mt">
+      <h2>{{ _("Delete") }}</h2>
+      <p class="muted small">{{ _("A backup of the ledger is made first, and the history keeps a copy of the transaction.") }}</p>
+      <form method="post" action="/transactions/{{ tx.id }}/delete" data-confirm="{{ _('Delete this transaction?') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button class="btn danger" type="submit">{{ _("Delete transaction #{n}", n=tx.id) }}</button>
+      </form>
+    </article>
+  </div>
+
+  <article class="card">
+    <h2>{{ _("History") }}</h2>
+    {% if history %}
+    <ul class="list">
+      {% for c in history %}
+      <li><span><span class="desc">{{ action_label(c.action) }}</span><span class="sub">{{ local_time(c.at) }}</span><span class="sub">{{ c.summary }}</span></span></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">{{ _("Not changed since it was entered.") }}</p>{% endif %}
+  </article>
+</div>
+{% endblock %}

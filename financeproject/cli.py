@@ -57,7 +57,6 @@ from financeproject.errors import FinanceError
 from financeproject.ledger import accounts as acc_mod
 from financeproject.ledger.db import (
     backup,
-    init_db,
     is_initialised,
     make_engine,
     open_ledger,
@@ -239,22 +238,11 @@ def _check_choice(value: str, choices: tuple[str, ...], option: str) -> str:
 @guarded
 def init(ctx: typer.Context) -> None:
     """Create the ledger (an existing one is left as it is) and load the bundled CPI."""
-    from financeproject.prices.update import load_bundled_cpi
+    from financeproject.ledger.db import create_ledger
 
-    path: Path = ctx.obj.db_path
-    existed = path.exists()
-    engine = make_engine(path)
-    try:
-        if existed and is_initialised(engine):
-            open_ledger(engine)
-        init_db(engine)
-        with session_scope(engine) as s:
-            report = load_bundled_cpi(s)
-    finally:
-        engine.dispose()
-    path.chmod(0o600)
-    console.print(f"[green]Ledger {'already existed' if existed else 'created'}:[/] {path}")
-    for line in report.messages:
+    first, *rest = create_ledger(ctx.obj.db_path)
+    console.print(f"[green]{escape(first.split(':')[0])}:[/]{escape(first.split(':', 1)[1])}")
+    for line in rest:
         console.print(f"  {line}")
     console.print(
         "\nNext steps:\n"
@@ -1380,6 +1368,34 @@ def chart(
     console.print(f"[green]Chart:[/] {target}")
 
 
+# --------------------------------------------------------------------------- the web interface
+
+
+@app.command()
+@guarded
+def ui(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option(help="The port to use (another free one if it is taken)")] = 8765,
+    browser: Annotated[bool, typer.Option(help="Open the browser")] = True,
+    stop: Annotated[bool, typer.Option("--stop", help="Stop the running interface")] = False,
+    shortcut: Annotated[bool, typer.Option("--shortcut", help="Make a desktop shortcut that opens the interface, then exit")] = False,
+) -> None:
+    """Open the interface in your browser. It runs on this computer only; stop it with Ctrl+C or from Settings."""
+    from financeproject.web import server
+
+    if stop:
+        console.print("[green]The interface was stopped.[/]" if server.stop() else "The interface was not running.")
+        return
+    if shortcut:
+        from financeproject.web.shortcut import create_shortcut
+
+        made = create_shortcut(ctx.obj.db_path if ctx.obj.explicit else None)
+        for path in made:
+            console.print(f"[green]Shortcut:[/] {escape(str(path))}")
+        return
+    server.serve(ctx.obj.db_path, port=port, open_browser=browser, echo=console.print)
+
+
 # --------------------------------------------------------------------------- backup and demo
 
 
@@ -1407,54 +1423,25 @@ def demo(
     overwrite: Annotated[bool, typer.Option(help="Delete an existing demo ledger and build it again")] = False,
 ) -> None:
     """Build a separate demo ledger with a made-up household (your own ledger is not touched)."""
-    from financeproject.demo import SYNTHETIC_SOURCE, build_demo, synthetic_prices
-    from financeproject.prices.http import make_client
-    from financeproject.prices.update import load_bundled_cpi, update_fx, update_gold
-    from financeproject.reports.context import load_market_data
+    from financeproject.demo import create_demo_ledger
 
-    real_ledger = config.default_db_path().resolve()
     path: Path = ctx.obj.db_path if ctx.obj.explicit else config.demo_db_path()
-    if path.resolve() == real_ledger:
-        raise FinanceError("Demo data never goes into your real ledger; give another --db.")
-    if path.exists():
-        if not overwrite:
-            raise FinanceError(f"{path} already exists. Use --overwrite to build it again.")
-        path.unlink()
+    if path.exists() and not overwrite and path.resolve() != config.default_db_path().resolve():
+        raise FinanceError(f"{path} already exists. Use --overwrite to build it again.")
     end_day = day(end)
     start_day = parse_date(start) if start else add_months(month_start(end_day), -12)
-    engine = make_engine(path)
-    try:
-        init_db(engine)
-        with session_scope(engine) as s:
-            load_bundled_cpi(s)
-            source = "made up"
-            if not synthetic:
-                try:
-                    with make_client() as client, console.status("Downloading real exchange rates and gold prices…") as st:
-                        update_fx(
-                            s, client, start_day - timedelta(days=7), end_day, ["USD"], config.evds_api_key(),
-                            pause=0.1, progress=st.update,
-                        )
-                        update_gold(s, client, start_day - timedelta(days=7), end_day, progress=st.update)
-                    source = "TCMB + Frankfurter"
-                except (httpx.HTTPError, FinanceError) as exc:
-                    err.print(f"[yellow]Download failed ({escape(str(exc))}); using made-up prices.[/]")
-                    s.rollback()
-                    load_bundled_cpi(s)
-                    synthetic = True
-            if synthetic:
-                for q in synthetic_prices(start_day - timedelta(days=7), end_day):
-                    upsert_price(s, q.commodity, q.quote, q.on, q.value, SYNTHETIC_SOURCE)
-            s.flush()
-            market = load_market_data(s)
-            summary = build_demo(s, start_day, end_day, market.book, market.deflator)
-    finally:
-        engine.dispose()
-    path.chmod(0o600)
+    with console.status("Building the demo household…") as status:
+        made = create_demo_ledger(
+            path, start_day, end_day, synthetic=synthetic, api_key=config.evds_api_key(), overwrite=overwrite,
+            progress=status.update,
+        )
+    if made.warning:
+        err.print(f"[yellow]{escape(made.warning)}[/]")
+    summary = made.summary
     console.print(
         f"[green]Demo ledger:[/] {path}\n  {summary.start} – {summary.end}, {summary.transactions} transactions, "
-        f"prices: {source}\nTo look at it:\n  finance -d \"{path}\" balance-sheet\n  finance -d \"{path}\" networth\n"
-        f"  finance -d \"{path}\" chart"
+        f"prices: {made.prices}\nTo look at it:\n  finance -d \"{path}\" ui\n  finance -d \"{path}\" balance-sheet\n"
+        f"  finance -d \"{path}\" networth"
     )
 
 

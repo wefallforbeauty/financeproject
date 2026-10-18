@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_macros.html" import category_choices with context %}
+{% block title %}{{ _("Preview: {file}", file=file_name) }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ _("Preview: {file}", file=file_name) }}</h1>
+    <p>{{ result.source }}{% if statement %} · {{ statement.start.isoformat() }} – {{ statement.end.isoformat() }} · {{ _.n("{n} line", "{n} lines", statement.lines|length) }}{% if statement.has_balances %} · {{ _("balance {start} → {end}", start=money(statement.opening_balance), end=money(statement.closing_balance)) }}{% endif %}{% endif %}</p>
+  </div>
+</header>
+
+{% if result.errors %}
+<div class="alerts">
+  <div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text"><strong>{{ _("Nothing can be imported until these are fixed:") }}</strong>
+    <ul>{% for e in result.errors[:30] %}<li>{{ e }}</li>{% endfor %}</ul></div></div>
+</div>
+{% endif %}
+
+<section class="grid four">
+  <article class="card stat"><h2 class="label">{{ _("New") }}</h2><p class="stat-value">{{ result.new }}</p></article>
+  <article class="card stat"><h2 class="label">{{ _("Already in the ledger") }}</h2><p class="stat-value">{{ result.duplicates }}</p></article>
+  <article class="card stat"><h2 class="label">{{ _("Without a category") }}</h2><p class="stat-value">{{ result.uncategorized }}</p></article>
+  <article class="card stat"><h2 class="label">{{ _("Balance check") }}</h2>
+    {% set check = result.balance_check %}
+    {% if check %}<p class="stat-value">{% if check.ok %}<span class="badge good">✓ {{ _("matches") }}</span>{% else %}<span class="badge critical">{{ _("off by {difference}", difference=money(check.difference)) }}</span>{% endif %}</p>
+    <p class="delta">{{ _("bank {bank} on {on}", bank=money(check.bank), on=check.on.isoformat()) }}</p>
+    {% else %}<p class="delta">{{ _("This file has no balances to check.") }}</p>{% endif %}
+  </article>
+</section>
+{% if result.opening %}<p class="muted">{{ _("An opening balance of {value} on {on} will be added.", value=money(result.opening[1]), on=result.opening[0].isoformat()) }}</p>{% endif %}
+
+<form method="post" action="/import/confirm" id="confirm-import">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="upload_id" value="{{ upload_id }}">
+  {% for key, value in options.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <div class="card flush">
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>#</th><th>{{ _("Date") }}</th><th>{{ _("Description") }}</th><th class="num">{{ _("Amount") }}</th><th>{{ _("Category or account") }}</th><th>{{ _("How") }}</th></tr></thead>
+      <tbody>
+      {% for r in result.rows %}
+        <tr>
+          <td class="sub">{{ r.line }}</td>
+          <td class="nowrap">{{ r.date.isoformat() }}</td>
+          <td><span class="desc">{{ r.payee or r.description }}</span>{% if r.payee and r.payee != r.description %}<span class="sub">{{ r.description }}</span>{% endif %}</td>
+          <td class="num {{ 'in' if r.amount > 0 else '' }}">{{ money(r.amount) }}{% if r.commodity != "TRY" %} {{ r.commodity }}{% endif %}</td>
+          <td>
+            {% if editable(r) %}
+              <input type="hidden" name="was_{{ r.line }}" value="{{ r.counter_account }}">
+              <select name="cat_{{ r.line }}" aria-label="{{ _('Category of line {n}', n=r.line) }}">
+                {{ category_choices(choices, r.amount, r.counter_account) }}
+                {% if r.counter_account not in choices.categories|map(attribute="value")|list %}<option value="{{ r.counter_account }}" selected>{{ r.counter_account }}</option>{% endif %}
+              </select>
+            {% else %}<span class="sub">{{ r.counter_account }}</span>{% endif %}
+          </td>
+          <td>{% set label, tone = how(r) %}<span class="badge {{ tone }}">{{ label }}</span>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</form>
+<div class="actions mt">
+  {% if not result.errors and result.new %}<button class="btn primary" type="submit" form="confirm-import">{{ _.n("Import {n} transaction", "Import {n} transactions", result.new) }}</button>
+  {% elif not result.errors %}<span class="muted">{{ _("Everything in this file is already in the ledger.") }}</span>{% endif %}
+  <form method="post" action="/import/cancel">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="upload_id" value="{{ upload_id }}">
+    <button class="btn" type="submit">{{ _("Cancel") }}</button>
+  </form>
+</div>
+{% endblock %}
