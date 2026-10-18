@@ -14,7 +14,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from financeproject.core.kinds import BALANCE_SHEET_TYPES
+from financeproject.core.kinds import BALANCE_SHEET_TYPES, EXPENSE, INCOME
 from financeproject.errors import LedgerError
 from financeproject.ingest import learn
 from financeproject.ingest.rules import rule_matches
@@ -77,14 +77,20 @@ def review(session: Session) -> list[ReviewItem]:
 
 
 def categorize(session: Session, transaction_id: int, account: str | Account) -> Transaction:
-    """Put the uncategorized leg of a transaction into ``account``."""
+    """Put the uncategorized leg of a transaction into ``account``, an income or expense category.
+
+    Either kind fits either sign: money coming back from a shop (a refund) goes
+    to the expense category it was spent on.
+    """
     target = find_account(session, account)
     tx = session.get(Transaction, transaction_id)
     leg = next((p for p in tx.postings if p.account.path in UNCATEGORIZED), None) if tx else None
     if leg is None:
         raise LedgerError(f"Transaction #{transaction_id} has no uncategorized leg.")
-    if target.type != leg.account.type:
-        raise LedgerError(f"{target.path} is not an {leg.account.type} account like {leg.account.path}.")
+    if target.type not in (INCOME, EXPENSE):
+        raise LedgerError(f"The category must be an income or expense account: {target.path}")
+    if target.commodity_code and target.commodity_code != leg.commodity_code:
+        raise LedgerError(f"{target.path} holds only {target.commodity_code}; this transaction is in {leg.commodity_code}.")
     move_posting(session, leg, target)
     return tx
 

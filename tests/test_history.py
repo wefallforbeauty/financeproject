@@ -207,6 +207,16 @@ def test_review_suggests_and_categorizes(bank, fixtures):
     assert accept_confident(s) == 1 and uncategorized_count(s) == before - 1
 
 
+def test_a_refund_goes_back_to_its_expense_category(bank):
+    s = bank
+    refund = record_income(s, Decimal(120), "Income:Uncategorized", "Ziraat Checking", date(2026, 9, 29), "REFUND")
+    categorize(s, refund.id, "Groceries")  # money back from a shop: less spent on groceries
+    assert {p.account.path: p.amount for p in refund.postings}["Expenses:Food:Groceries"] == Decimal(-120)
+    other = record_expense(s, Decimal(10), "Expenses:Uncategorized", "Ziraat Checking", date(2026, 9, 29), "X")
+    with pytest.raises(FinanceError, match="income or expense"):
+        categorize(s, other.id, "Ziraat Checking")
+
+
 def test_automatic_backups_keep_the_newest(tmp_path):
     db = tmp_path / "ledger.sqlite"
     engine = make_engine(db)
