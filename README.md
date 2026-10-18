@@ -1,4 +1,4 @@
-# financeproject 03
+# financeproject 04a
 
 A personal finance program for a household in Türkiye. The goal covers the
 personal balance sheet and net worth, transactions and cash flow, cash-flow
@@ -19,11 +19,19 @@ installments, plans for paying off several debts, and what debts weigh once
 inflation is counted. **03** is about investments: fund prices from TEFAS and
 share prices from Borsa İstanbul, time- and money-weighted returns in four
 units, risk with a backtest of the value at risk, and concentration with the
-deposit insurance check; it also reads credit card lists from PDF. What
-changed in this version: [UPDATE_LOG.md](UPDATE_LOG.md). Methods and
-references: [docs/METHOD.md](docs/METHOD.md). Data sources:
+deposit insurance check; it also reads credit card lists from PDF. **04a**
+brings the program into the browser: `finance ui` opens an interface on this
+computer, with the net worth chart, transactions to search, add, edit and
+delete, imports that are previewed line by line and can be undone, a review
+of the uncategorized transactions, accounts and settings, in English or
+Turkish. What changed in this version: [UPDATE_LOG.md](UPDATE_LOG.md).
+Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
 [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 
+- **The interface** (`finance ui`): a web application that runs on this
+  computer only, in English or Turkish, light or dark. Every change is kept
+  in a history, every import can be undone, and a backup is made before
+  either.
 - **Double-entry ledger** (SQLite). Every transaction balances to zero in every
   unit. Buying and selling currency, gold, funds and shares goes through
   trading accounts (Selinger). Amounts are stored as `Decimal`; floats are
@@ -60,15 +68,16 @@ references: [docs/METHOD.md](docs/METHOD.md). Data sources:
   Republic of Türkiye (TCMB), Frankfurter XAU/USD for gold, the Turkish CPI
   from EVDS3 (with a key) or the TCMB inflation table, TEFAS for funds, Yahoo
   Finance for Borsa İstanbul shares, and a CPI copy shipped with the package.
-- **Tests:** 216 pytest tests, among them property tests on random ledgers
+- **Tests:** 279 pytest tests, among them property tests on random ledgers
   (Hypothesis), a check of the CPI against TurkStat's real series, a bank's
   published example of the annual cost rate, the spreadsheet function XIRR's
-  example, Kupiec's acceptance regions as tabulated by Jorion, and made-up bank
-  statements and a card list PDF in Ziraat Bankası's formats.
+  example, Kupiec's acceptance regions as tabulated by Jorion, made-up bank
+  statements and a card list PDF in Ziraat Bankası's formats, and every page of
+  the interface with its security checks and its Turkish translation.
 
-![Demo household: net worth (made-up household, real exchange rates and gold prices)](docs/example_networth.png)
+![The interface: the overview of the demo household (made-up household, real exchange rates and gold prices)](docs/interface_overview.png)
 
-![Demo household: where September's income went](docs/example_sankey.png)
+![The interface: an import previewed line by line, with the categories still to choose](docs/interface_import.png)
 
 ## Quick start
 
@@ -80,21 +89,61 @@ python -m venv .venv
 # Activate it
 #   Windows (PowerShell):  .venv\Scripts\Activate.ps1
 #   macOS and Linux:       source .venv/bin/activate
-pip install -e ".[dev]"     # sqlalchemy, pandas, httpx, typer, rich, platformdirs, python-calamine, pypdf, matplotlib, pytest, hypothesis
+pip install -e ".[dev]"     # sqlalchemy, pandas, httpx, typer, rich, platformdirs, python-calamine, pypdf,
+                            # fastapi, uvicorn, jinja2, python-multipart, matplotlib, pytest, hypothesis
 ```
 
 With the environment active:
 
 ```sh
-finance init                # creates your ledger in the user data directory
+finance ui                  # the interface; on the first start it offers to create your ledger
 finance demo                # a separate demo ledger: made-up household, real prices
-finance -d <path printed by demo> balance-sheet
+finance -d <path printed by demo> ui
+finance init                # or create your ledger from the command line
 pytest
 ```
 
 `finance demo --synthetic` works offline with made-up prices. `python -m
 financeproject` does the same as `finance`. On systems where `python` points
 to Python 2 or is missing, use `python3`.
+
+## The interface
+
+`finance ui` starts the interface and opens it in the browser. It runs on this
+computer only, and the page loads nothing from the internet.
+
+```sh
+finance ui                      # your ledger; the first time, the welcome page creates it or shows the demo
+finance -d <demo path> ui       # the demo household
+finance ui --no-browser         # prints the link instead of opening it (port 8765, or another free one)
+finance ui --stop               # stops it; so do Settings → Stop the interface and Ctrl+C
+finance ui --shortcut           # an icon on the desktop and in the application menu that opens it
+```
+
+`finance ui` run again while the interface is running opens the browser at it
+instead of starting another one.
+
+| Page | What it does |
+|---|---|
+| Overview | Net worth in four units and its change since the end of last month; net worth month by month in TRY, real TRY, dollars or grams of gold, also as a table; this and last month's income, spending and savings rate; the payments of the next 30 days; the latest transactions; what needs attention (transactions without a category, a ledger that differs from the bank, missing or old prices) |
+| Transactions | Search by text or amount while typing, filters by account, category and dates. One transaction shows its legs, its installment plan and its history, and can be edited (the date, description, payee and note; for a simple one also the amount, category and account) or deleted. New ones: an expense (also in installments), income, a transfer, buying or selling currency, gold or funds |
+| Import | A statement, card list or CSV file is shown line by line before anything is written: what is new, what is in the ledger already, how each line got its category, the balance check. Categories can be changed right there. Every import is recorded and can be undone, all its transactions at once |
+| Categorize | The transactions without a category, each with a suggestion from a rule or the learned model (with its probability): save them one by one, accept all confident ones, or make a rule from a line |
+| Accounts | Balances by kind, in their own unit and in TRY; a new account or category with its balance today; closing an account |
+| History | What was edited, recategorized, deleted, imported or undone, newest first |
+| Settings | Language (English or Turkish), theme (as the system, light, dark) and number format; updating prices in the background; your ledger or the demo household, and building the demo again; backups to make and download; the EVDS key; the desktop shortcut; stopping |
+
+A backup of the ledger is made before every import, undo and deletion (the
+newest 20 are kept). The search, the category review and a background task's
+progress update in place (HTMX); the chart is drawn by ECharts. Both are
+bundled with the package. Messages from the program's core, such as an
+import's errors, stay in English.
+
+**Phones.** The pages fit a phone's screen, but the interface does not take
+connections from other devices yet: that needs a password, encryption (HTTPS)
+and pairing each phone once. It is planned for 04c.
+
+![The overview on a phone, in the dark theme](docs/interface_phone_dark.png)
 
 ## Usage
 
@@ -125,13 +174,20 @@ finance transfer 3500 --from "Ziraat Checking" --to Bonus             # paying t
 finance exchange --from "Ziraat Checking" --paid 49126.70 --to "USD Account" --received 1000
 finance txn add --description "Gift" -p "Expenses:Gifts=1500" -p "Ziraat Checking"
 
+# Finding, changing, undoing
+finance txn list --search market        # in the description, payee or note; a number finds amounts
+finance txn edit 251 --amount 460.75 --note "with the receipt"
+finance txn history 251                 # what it was before each change; without a number, all changes
+finance imports list                    # the files imported, and how many of their transactions are left
+finance imports undo 3                  # deletes what import 3 added (after a backup)
+
 # Prices
 finance price update                    # TCMB rates, gold, CPI, funds, shares; fills in missing days
 finance config show                     # where the files are
 ```
 
 Numbers are shown as `1,234.56`. `finance config number-format "1.234,56"`
-switches to the Turkish style.
+switches to the Turkish style (in the interface: Settings → Numbers).
 
 ### Importing bank statements
 
@@ -367,7 +423,11 @@ levels and past exchange rates arrive in one request.
 
 A made-up household with real exchange rates and gold prices
 (`finance demo`, 2026-10-17). Its fund and share are made up, and so are their
-prices:
+prices. The command line draws its figures as images:
+
+![Demo household: net worth (made-up household, real exchange rates and gold prices)](docs/example_networth.png)
+
+![Demo household: where September's income went](docs/example_sankey.png)
 
 ```
 ╭─ Net worth ─────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -487,15 +547,16 @@ Avalanche saves 281.21 in interest; snowball clears a first debt sooner, which h
 | Module | Contents |
 |---|---|
 | `financeproject/core/` | Pure calculations, no database or network: amounts (`money`), dates, text folding, account kinds (`kinds`), the price book (`prices`), CPI (`inflation`), valuation (`valuation`), the split of a change in value (`decompose`), recurring series (`recurring`), loans and the annual cost rate (`loans`), returns (`returns`), risk (`risk`), HTML tables (`htmltable`) |
-| `financeproject/ledger/` | SQLAlchemy models, database, accounts, transaction rules and splits (`transactions`), installments, loans and their payments (`loans`), balance queries |
+| `financeproject/ledger/` | SQLAlchemy models, database and backups, accounts, transaction rules, splits and edits (`transactions`), the change history (`history`), installments, loans and their payments (`loans`), balance queries and the transaction search (`queries`) |
 | `financeproject/prices/` | Clients for the TCMB XML, Frankfurter, EVDS3, the TCMB CPI table, TEFAS and Yahoo Finance; storing and updating |
-| `financeproject/ingest/` | Reading files (`tables`, `pdf`), bank statements (`statement`) and their templates (`banks/`: account statements, card lists), CSV, writing imports (`importer`), rules, the learned categorizer (`learn`) |
-| `financeproject/reports/` | Balance sheet, net worth series and chart, change in net worth (`change`), income statement (`income`), cash flow, Sankey, ratios, recurring payments, debts (`debt`), investments: returns, risk, concentration (`investments`) |
+| `financeproject/ingest/` | Reading files (`tables`, `pdf`), bank statements (`statement`) and their templates (`banks/`: account statements, card lists), CSV, writing imports and undoing them (`importer`), rules, the learned categorizer (`learn`), the category review (`review`) |
+| `financeproject/reports/` | Balance sheet, net worth series and chart, change in net worth (`change`), income statement (`income`), cash flow, Sankey, ratios, recurring payments, debts (`debt`), investments: returns, risk, concentration (`investments`), what needs attention (`alerts`) |
+| `financeproject/web/` | The interface: the application (`app`), its security checks (`security`), the pages (`views/`, `templates/`), styles, scripts and the bundled HTMX and ECharts (`static/`), the Turkish texts (`locales/`), the server (`server`), background tasks (`jobs`), the desktop shortcut (`shortcut`) |
 | `financeproject/cli.py` | Command line (`finance`) |
 | `financeproject/demo.py` | The made-up demo household |
 | `financeproject/data/` | Public data shipped with the package: the CPI copy ([description](financeproject/data/README.md)) |
-| `tests/` | pytest + Hypothesis; `fixtures/` holds saved real TCMB and Frankfurter answers and made-up Ziraat Bankası statements and a card list |
-| `docs/` | Method, data sources, example figures |
+| `tests/` | pytest + Hypothesis; `fixtures/` holds saved real TCMB and Frankfurter answers and made-up Ziraat Bankası statements and a card list; `test_web.py` runs the interface in the test process |
+| `docs/` | Method, data sources, example figures, pictures of the interface |
 
 ## Data and privacy
 
@@ -525,7 +586,21 @@ The repository is public, so **personal data never goes into it**.
   `settings.toml` keep such files out as a second safety net.
 - **Permissions:** the ledger, backups and the settings file are created
   readable only by the user (0600 on macOS and Linux).
-- **Demo data:** `finance demo` never writes into the real ledger.
+- **Demo data:** `finance demo` and the interface's demo never write into the
+  real ledger.
+- **The interface** listens on 127.0.0.1, so other devices cannot reach it.
+  Opening it takes the link with the running interface's random key, which
+  `finance ui` opens; the browser keeps the key in a cookie for this address
+  only. Another web page cannot use the interface: requests must name this
+  address (against DNS rebinding), changes must come from this address and
+  carry a token derived from the key, and pages run no scripts but their own
+  (Content Security Policy). HTMX and ECharts are bundled
+  ([VENDOR.md](financeproject/web/static/vendor/VENDOR.md) lists their
+  hashes), so the browser loads nothing from the internet, and the pages send
+  no referrer to other sites. An uploaded file waits in the data directory's
+  `uploads` folder (readable only by you) between the preview and the import
+  and is deleted after either; `ui.json` there holds the running interface's
+  port and key, and is removed when it stops.
 - **Encryption:** the ledger file itself is not encrypted yet. An encrypted
   disk (BitLocker, FileVault, LUKS) is recommended. Encrypting the file itself
   (SQLCipher) is among the next steps.
@@ -548,6 +623,9 @@ them:
    - **03:** card lists from PDF; card installments matched with their plans;
      a transfer seen on two statements booked once; fund and share prices
      fetched instead of typed.
+   - **04a:** every import is seen line by line in the browser before it is
+     written, its categories can be chosen there, and it can be undone
+     afterwards; a history keeps what every edit changed.
 2. **The efficient frontier is fragile at household scale** (Michaud 1989;
    DeMiguel et al. 2009). Version 05 will show it with shrinkage
    (Ledoit-Wolf), resampling, a 1/N comparison and out-of-sample checks, as
@@ -555,6 +633,7 @@ them:
 3. **Say how current and how sure each number is.** Every value is shown with
    its price date and source. Prices older than 7 days and assets without a
    price are flagged; they are not guessed and not added to net worth. The
+   interface's overview lists them under "needs attention". The
    learned categorizer only acts when it is sure enough, and reports its
    measured accuracy. The debt tools state their assumptions and show both
    repayment orders instead of choosing one. The value at risk comes with its
@@ -573,9 +652,11 @@ them:
 | **00** | Ledger, accounts, manual entry, CSV import and rules, TCMB, gold and CPI, net worth in four units, liquidity | ✅ |
 | **01** | Bank statement template (Ziraat Bankası), installment model, cash flow and income statement, Sankey, recurring payments, household financial ratios, decomposition of net worth changes, learning categorizer | ✅ |
 | **02** | Debt module: loans and payment plans, payments split from statements, the annual cost rate, avalanche and snowball, cash or installments, real debt burden | ✅ |
-| **03** | Investments: TEFAS and BIST prices, TWR and XIRR, real returns, volatility, maximum drawdown, VaR and CVaR with backtests, correlation, concentration; card lists from PDF | ✅ this version |
-| **04** | Wall monitor (kiosk), guest mode | ⏸ deferred for now |
-| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | next |
+| **03** | Investments: TEFAS and BIST prices, TWR and XIRR, real returns, volatility, maximum drawdown, VaR and CVaR with backtests, correlation, concentration; card lists from PDF | ✅ |
+| **04a** | Web interface: overview with the net worth chart, transactions (search, add, edit, delete, history), imports with a preview and undo, category review, accounts, settings; English and Turkish; light and dark; desktop shortcut | ✅ this version |
+| **04b** | The rest in the interface: reports (balance sheet, income statement, cash flow, Sankey, change in net worth, ratios), loans and debts, investments (returns, risk, concentration), rules; changes from using 04a | next |
+| **04c** | Phones on the home network (password, HTTPS, pairing), wall monitor (kiosk), guest mode | later |
+| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | after 04b |
 | **06** | Cash-flow forecasting: known flows and statistical forecasts, prediction intervals, backtests | |
 | **07** | Anomaly detection | |
 | **08** | Scenario engine: scenarios, sensitivity (Sobol), Monte Carlo, historical stress tests | |
@@ -601,15 +682,15 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 | | Rule engine | 00 / 01 | ◐ description or regex → account; amount and payee conditions later |
 | | Expected bills | 01 | ◐ found from the ledger, not entered by hand |
 | | Savings goals ("piggy banks") | 09 | ☐ |
-| | REST API | with a web interface | ☐ |
+| | REST API | later | ☐ the interface works on the library directly |
 | | Separate import tool | 00 / 01 / 03 | ◐ CSV with column mapping, the Ziraat Bankası account statements and card lists; more banks as samples arrive |
 | Actual Budget | Envelope budgeting | 09 | ☐ |
 | | Scheduled transactions | 06 | ☐ recurring payments are detected and loan installments are planned; booking them ahead is open |
 | | Custom reports | later | ☐ |
-| Sure (Maybe) | Modern net worth interface | with a web interface | ☐ |
+| Sure (Maybe) | Modern net worth interface | 04a / 04b | ◐ the overview: net worth in four units, month by month, what needs attention; the reports follow in 04b |
 | | Access for AI agents | 10 | ⏸ |
 | Ghostfolio | X-ray: concentration rules (institution, currency, single asset; TMSF deposit insurance limit) | 03 | ✅ `finance concentration` |
-| | Hiding the numbers (Zen mode) | 04 | ⏸ the monitor's guest mode |
+| | Hiding the numbers (Zen mode) | 04c | ⏸ the monitor's guest mode |
 | Wealthfolio | TWR and MWR side by side | 03 | ✅ `finance returns` |
 | | Splitting a period's change into its sources (income, gains, fees, taxes, FX) | 01 | ✅ `finance change`, in four units |
 | | API keys in the operating system keyring | later | ☐ for now a settings file readable only by the user |
@@ -621,7 +702,7 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 | Paisa | Bill calendar | 01 | ◐ `finance upcoming` |
 | | Goals | 09 | ☐ |
 | | Spreadsheet on ledger data | later | ☐ |
-| ezBookkeeping | Light enough for a Raspberry Pi | 04 | ⏸ |
+| ezBookkeeping | Light enough for a Raspberry Pi | 04c | ⏸ |
 | | Receipt scanning (OCR), MCP | 10 | ⏸ |
 | Rotki | Encrypted ledger (SQLCipher) | later | ☐ for now disk encryption and owner-only files |
 | | Keeping non-sensitive price data apart | later | ☐ |
@@ -630,53 +711,54 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 
 ## Not done in this version
 
-### From the 03 plan
+### From the 04a plan
 
-- **Interest rates** (the policy rate, deposit rates) as a benchmark and
-  risk-free rate are left for 05, where the portfolio models need them.
-- **Dividends** are booked by hand as income; Yahoo's dividend events are not
-  read.
+- **Phones and other devices** cannot connect yet (04c). The interface listens
+  on this computer only; opening it to the home network safely needs a
+  password, HTTPS and pairing.
+- **Reports, loans and investments** are still on the command line
+  (`balance-sheet`, `income-statement`, `loan`, `returns`, `risk`, …); 04b
+  brings them into the interface.
+- **Rules** are made from the category review only; listing, changing and
+  deleting them stays on the command line (`finance rule`).
+- **One user.** The interface has no logins of its own: whoever uses this
+  computer's account can open it, as they can open the ledger file.
 
-### Found while building 03
+### Found while building 04a
 
-- **TEFAS's new API** (2026) is not documented and gives at most five years
-  of prices; it may change again. Yahoo Finance's chart API is unofficial.
-  `finance price add` stays as the way to enter a price by hand.
-- **Fund orders** are executed at a later day's price; the ledger books a
-  purchase on its own day, and returns use each day's published price.
-- **Daily returns** count money bought during a day as invested from the
-  previous close, as Portfolio Performance does. On a day of a big price move
-  a purchase at that day's price shows a small gain or loss that did not
-  happen.
-- **Rights issues** ("bedelli sermaye artırımı") are not modeled; a bonus issue
-  or split is recorded with `finance split`. A split older than the last price
-  update is not reported again.
-- **Income paid outside the portfolio** (a dividend into a bank account that is
-  not part of it) is not seen by `returns`; choose the portfolio with
-  `--account` to include the account it is paid into.
-- **Value at risk** is for one day and from the past only; the backtest needs
-  more than 250 market days. Correlations in TRY include the lira's own moves.
-- **Concentration** counts a fund in the currency it is priced in, not in the
-  currencies of what it holds. The TMSF limits are written in for 2024–2026
-  and have to be updated every year; joint accounts are counted for their
-  owner.
-- **Card lists** have no balances or totals, so they cannot be checked line by
-  line like account statements. Refunds go to `Income:Uncategorized`. Lines in
-  other currencies are refused.
-- Carried over from 02: bills and scheduled transactions; statement lines of
-  loans defined later stay where the import put them. From 01: other banks
-  need one sample export each; the housing cost ratio is not computed; EVDS
-  has still not been tried with a real key; the gold price is the
-  international parity.
+- **Not translated:** messages from the program's core (an import's errors,
+  the ledger's checks) and the names in a ledger (accounts, categories, the
+  demo household's shops and descriptions).
+- **The learned model** can suggest an income category for a refund (money
+  back from a shop). The preview and the category review now offer the
+  expense categories for money in as well, so the refund can go back to what
+  it was spent on.
+- **Number format and language** are separate settings: Turkish texts with
+  `1,234.56` numbers are possible; choose `1.234,56` in Settings.
+- **While a background task writes** (updating prices, building the demo), a
+  change may be refused with "the ledger is busy"; it works again when the
+  task is over.
+- **Transactions with more than two legs** (exchanges, loan payments) can
+  change only their date, description, payee and note; to change the rest,
+  delete one and enter it again.
+- **Browsers:** tested with Firefox 158 (driven through WebDriver BiDi) and
+  with FastAPI's test client; other current browsers should work but were not
+  tried.
+- Carried over from 03: dividends are booked by hand; interest rates as a
+  benchmark wait for 05; TEFAS's new API is undocumented and Yahoo's is
+  unofficial; card lists have no balances to check. From 01 and 02: other
+  banks need one sample export each; EVDS has not been tried with a real key;
+  bills and scheduled transactions; the gold price is the international
+  parity.
 
 ## Next steps (proposal for the next version)
 
-1. **Portfolio theory** (05 on the roadmap; 04 stays deferred): the efficient
-   frontier, GMV and tangency portfolios, HRP and 1/N on the return series of
-   03, with shrinkage and out-of-sample checks, and interest rates from EVDS
-   as the risk-free rate.
-2. **Bills and scheduled transactions:** confirm a detected recurring payment
+1. **04b, the rest in the interface:** the reports (balance sheet, income
+   statement, cash flow, Sankey, change in net worth, ratios), loans and debts,
+   investments and rules as pages, with their charts drawn in the browser.
+2. **What using 04a shows:** pages, words or steps that are missing, slow or
+   unclear in daily use.
+3. **Bills and scheduled transactions:** confirm a detected recurring payment
    as a bill, get warned when it is late or its amount changes.
-3. **Dividends from the data:** suggest the dividends of the shares held from
-   Yahoo's events, to be confirmed.
-4. **Templates for the other banks** the family uses, one sample each.
+4. **04c:** phones on the home network (password, HTTPS, pairing), the wall
+   monitor and its guest mode. Then 05, portfolio theory.

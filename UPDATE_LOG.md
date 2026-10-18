@@ -1,5 +1,87 @@
 # Update log
 
+## 04a (2026-10-18)
+
+Pull requests #6 and #7. Version 04a is the web interface: `finance ui` opens
+the household's ledger in the browser, on this computer only, in English or
+Turkish. Version 04 was split: 04b brings the reports, loans and investments
+into the interface, 04c phones on the home network and the wall monitor.
+
+### The interface
+
+- **Pages:** the overview (net worth in four units, its monthly chart with a
+  table view, this and last month's income, spending and savings rate, the
+  payments of the next 30 days, the latest transactions, what needs
+  attention); transactions (search while typing, filters, one transaction with
+  its legs, plan and history; editing, deleting, adding all four kinds);
+  importing (statements, card lists and CSV previewed line by line, the
+  categories changeable before writing, every import undoable); the category
+  review (suggestions from rules and the learned model, one by one or all
+  confident ones, a rule from a line); accounts; the change history; settings.
+- **Language and look:** English and Turkish (`web/locales/tr.json`; every
+  text of the pages is translated, a test checks it), a light and a dark theme
+  or the system's, the number format. The pages fit a phone's screen.
+- **Safety:** 127.0.0.1 only; a random key per start, given to the browser
+  through the login link and kept in an `HttpOnly`, `SameSite=Strict` cookie;
+  the `Host` header checked against DNS rebinding; changes need this origin
+  and a token derived from the key; a Content Security Policy without inline
+  scripts or `eval`; no framing, no caching, no referrer to other sites.
+  HTMX 2.0.11 and ECharts 6.1.0 are bundled, with their licenses and hashes
+  (`web/static/vendor/VENDOR.md`).
+- **Running it:** `finance ui` (`--port`, `--no-browser`), `finance ui --stop`,
+  `finance ui --shortcut` for an icon on the desktop and in the application
+  menu (Linux, Windows, macOS). A second `finance ui` opens the running one.
+  Updating prices and building the demo run in the background with their
+  progress on the page, which reloads itself when they end.
+- New dependencies: FastAPI, uvicorn, Jinja2, python-multipart.
+
+### In the library, for the interface
+
+- **Editing transactions** (`update_transaction`, `finance txn edit`): the
+  date, description, payee and note of any transaction, the amount of a
+  simple one or a transfer, the category and account of a simple one; all or
+  nothing.
+- **The change history** (`ledger/history.py`, table `changes`,
+  `finance txn history`): edits, changes of category, deletions, imports and
+  undone imports, with the legs before and after.
+- **Import records and undo** (tables `imports` and `import_transactions`,
+  `finance imports list` and `undo`): which file added which transactions;
+  undoing deletes them, the opening balance it made included.
+- **Search** (`find_transactions`, `finance txn list --search`): in the
+  description, payee and note, ignoring case and Turkish letters; a number
+  also finds the amounts it equals.
+- **Automatic backups** before imports, undo and deletions; the newest 20 are
+  kept.
+- **The category review** (`ingest/review.py`): every uncategorized
+  transaction with a rule's or the model's suggestion; a refund may go back to
+  an expense category.
+- **What needs attention** (`reports/alerts.py`), `create_ledger`,
+  `create_demo_ledger`; upcoming payments carry the parts of their labels, so
+  the interface can word them in Turkish.
+- Ledgers made by 03 get the new tables when they are opened.
+
+### Fixes
+
+- An uncategorized installment purchase on a card list was left out of the
+  import's count of uncategorized lines.
+- The demo household's shops have generic names instead of real chains
+  (pull request #6).
+
+### Tests and documents
+
+- 279 tests (216 before): every page in both languages, with templates that
+  fail on any missing name; the login, address, origin and token checks;
+  adding, editing and deleting; imports with their preview, changed
+  categories, card lists and undo; the review, accounts, settings, background
+  tasks, the shortcut, the server's start and stop; the Turkish catalog
+  against every text of the pages; the bundled files against their hashes.
+  The pages were also clicked through in Firefox (headless, WebDriver BiDi),
+  which found that `no-referrer` makes browsers send `Origin: null` with
+  forms.
+- METHOD.md §27, the interface: its checks, the change history, the chart's
+  choices, the languages.
+- README: the interface, with pictures of the demo household.
+
 ## 03 (2026-10-17)
 
 Pull request #5. Version 03 is the investments module: fund prices from TEFAS
