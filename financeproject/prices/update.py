@@ -336,3 +336,54 @@ def update_yahoo(
     if codes:
         report.messages.append(f"Shares (Yahoo Finance): {', '.join(codes)}")
     return report
+
+
+SOURCES = ("fx", "gold", "cpi", "tefas", "yahoo")
+
+
+def update_range(session: Session, start: date | None, end: date | None, today: date) -> tuple[date, date]:
+    """The days to update: from ``start`` (default: the first transaction, or 30 days ago) to ``end`` (today)."""
+    from financeproject.ledger.queries import transaction_date_range
+
+    first, _ = transaction_date_range(session)
+    start_day = start or first or today - timedelta(days=30)
+    end_day = end or today
+    if end_day < start_day:
+        raise SourceError("The end date is before the start date.")
+    return start_day, end_day
+
+
+def update_all(
+    session: Session,
+    client: httpx.Client,
+    start: date,
+    end: date,
+    *,
+    only: str | None = None,
+    api_key: str | None = None,
+    today: date | None = None,
+    progress: Progress | None = None,
+) -> UpdateReport:
+    """Every source in turn (or ``only`` one), committing after each."""
+    if only is not None and only not in SOURCES:
+        raise SourceError(f"Unknown price source {only!r}; one of: {', '.join(SOURCES)}")
+    today = today or date.today()
+    report = UpdateReport()
+    if only in (None, "fx"):
+        report.merge(update_fx(session, client, start, end, tcmb_currencies(session), api_key, progress=progress))
+        session.commit()
+    if only in (None, "gold"):
+        report.merge(update_gold(session, client, start, end, progress=progress))
+        session.commit()
+    if only in (None, "cpi"):
+        if progress:
+            progress("CPI")
+        report.merge(update_cpi(session, client, api_key, today))
+        session.commit()
+    if only in (None, "tefas"):
+        report.merge(update_tefas(session, client, start, end, today, progress=progress))
+        session.commit()
+    if only in (None, "yahoo"):
+        report.merge(update_yahoo(session, client, start, end, today, progress=progress))
+        session.commit()
+    return report

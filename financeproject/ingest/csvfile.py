@@ -173,10 +173,12 @@ def import_csv(
     dry_run: bool = False,
     use_model: bool = True,
     min_confidence: float = learn.DEFAULT_MIN_CONFIDENCE,
+    overrides: dict[int, str] | None = None,
 ) -> ImportResult:
     """Import ``path``. ``account`` is used for rows without an ``account`` value.
 
     With ``dry_run`` (or when any row is invalid) nothing is written.
+    ``overrides`` maps line numbers to chosen counter accounts.
     """
     fmt = fmt or CsvFormat()
     rows, errors, encoding = read_rows(Path(path), fmt)
@@ -191,4 +193,5 @@ def import_csv(
         dry_run=dry_run,
         use_model=use_model,
         min_confidence=min_confidence,
+        overrides=overrides,
     )

@@ -122,6 +122,9 @@ class Transaction(Base):
     loan_payment: Mapped[LoanPayment | None] = relationship(
         back_populates="transaction", cascade="all, delete-orphan", uselist=False
     )
+    import_link: Mapped[ImportLink | None] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Posting(Base):
@@ -257,3 +260,60 @@ class Rule(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     account: Mapped[Account] = relationship()
+
+
+class Change(Base):
+    """A change to the ledger: a transaction edited, recategorized or deleted, a file
+    imported or an import undone.
+
+    ``before`` and ``after`` are JSON snapshots of the transaction. The
+    transaction's id is kept as a plain number, so it survives a deletion.
+    """
+
+    __tablename__ = "changes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+    """UTC."""
+    action: Mapped[str] = mapped_column(String(20), index=True)
+    transaction_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    import_id: Mapped[int | None] = mapped_column(Integer)
+    summary: Mapped[str] = mapped_column(String(300))
+    before: Mapped[str | None] = mapped_column(Text)
+    after: Mapped[str | None] = mapped_column(Text)
+
+
+class ImportBatch(Base):
+    """One import: which file went into which account, and the transactions it added."""
+
+    __tablename__ = "imports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+    """UTC."""
+    file_name: Mapped[str] = mapped_column(String(255))
+    file_sha256: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(80))
+    """What was read, for example ``Ziraat Bankası xlsx``."""
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
+    added: Mapped[int] = mapped_column(Integer, default=0)
+    statement_end: Mapped[dt.date | None] = mapped_column(Date)
+    statement_balance: Mapped[Decimal | None] = mapped_column(DecimalText(48))
+    """The bank's balance at ``statement_end``, when the statement prints one."""
+    undone_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+    account: Mapped[Account | None] = relationship()
+    links: Mapped[list[ImportLink]] = relationship(back_populates="batch", cascade="all, delete-orphan")
+
+
+class ImportLink(Base):
+    """A transaction added by an import."""
+
+    __tablename__ = "import_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    import_id: Mapped[int] = mapped_column(ForeignKey("imports.id", ondelete="CASCADE"), index=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"), unique=True)
+
+    batch: Mapped[ImportBatch] = relationship(back_populates="links")
+    transaction: Mapped[Transaction] = relationship(back_populates="import_link")

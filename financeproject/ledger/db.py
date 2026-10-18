@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from financeproject import __version__
 from financeproject.core.kinds import EQUITY, EXPENSE, INCOME
+from financeproject.core.text import fold
 from financeproject.errors import FinanceError
 from financeproject.ledger.models import Account, Base, Commodity, Meta
 
@@ -55,6 +56,8 @@ def make_engine(path: Path | str, echo: bool = False) -> Engine:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
+        # fold(text): the matching key of core.text.fold, for searches that ignore case and Turkish letters
+        dbapi_conn.create_function("fold", 1, lambda value: fold(value) if value is not None else None, deterministic=True)
 
     return engine
 
@@ -115,12 +118,26 @@ def session_scope(engine: Engine) -> Iterator[Session]:
         session.close()
 
 
-def backup(db_path: Path, target_dir: Path) -> Path:
+def backup(db_path: Path, target_dir: Path, label: str = "") -> Path:
     """Consistent copy through SQLite's online backup API."""
     target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    target = target_dir / f"{db_path.stem}-{stamp}.sqlite"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    target = target_dir / f"{db_path.stem}-{label + '-' if label else ''}{stamp}.sqlite"
     with closing(sqlite3.connect(db_path)) as src, closing(sqlite3.connect(target)) as dst:
         src.backup(dst)
     target.chmod(0o600)
+    return target
+
+
+AUTO_LABEL = "auto"
+AUTO_KEEP = 20
+
+
+def auto_backup(db_path: Path, target_dir: Path, keep: int = AUTO_KEEP) -> Path:
+    """A backup before a change that is hard to reverse (an import, undoing one, a deletion);
+    only the newest ``keep`` automatic backups are kept."""
+    target = backup(db_path, target_dir, AUTO_LABEL)
+    old = sorted(target_dir.glob(f"{db_path.stem}-{AUTO_LABEL}-*.sqlite"))
+    for extra in old[:-keep]:
+        extra.unlink(missing_ok=True)
     return target

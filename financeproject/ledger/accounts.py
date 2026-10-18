@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from financeproject.core.kinds import (
@@ -162,3 +162,23 @@ def account_tier(account: Account) -> int | None:
 
 def owner_name(account: Account) -> str:
     return account.owner.name if account.owner else SHARED_OWNER
+
+
+def close_account(session: Session, account: str | Account, on: date) -> Account:
+    """Close an account on ``on``: its balance must be zero then and it must have no later postings."""
+    from financeproject.ledger.models import Posting, Transaction
+    from financeproject.ledger.queries import account_balance
+
+    a = find_account(session, account)
+    if a.closed_on is not None:
+        raise AccountError(f"{a.path} was already closed on {a.closed_on}.")
+    if account_balance(session, a, on):
+        raise AccountError(f"The balance of {a.path} is not zero; move it to another account first.")
+    later = session.scalar(
+        select(func.count()).select_from(Posting).join(Transaction).where(Posting.account_id == a.id, Transaction.date > on)
+    )
+    if later:
+        raise AccountError(f"{a.path} has {later} postings after {on}.")
+    a.closed_on = on
+    session.flush()
+    return a

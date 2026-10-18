@@ -101,9 +101,10 @@ def rule_matches(session: Session) -> list[tuple[Transaction, Posting, CompiledR
 
 def apply_rules_to_uncategorized(session: Session) -> list[tuple[Transaction, Account]]:
     """Move postings from the ``Uncategorized`` accounts to the account of the first matching rule."""
+    from financeproject.ledger.transactions import move_posting
+
     moved: list[tuple[Transaction, Account]] = []
     for tx, posting, rule in rule_matches(session):
-        posting.account = rule.account
+        move_posting(session, posting, rule.account)
         moved.append((tx, rule.account))
-    session.flush()
     return moved

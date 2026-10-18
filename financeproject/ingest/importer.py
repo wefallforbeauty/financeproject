@@ -26,6 +26,10 @@ If the ledger already has that transfer (the same two accounts, the opposite
 amounts, within three days), for example from the other account's statement,
 the row is skipped.
 
+Every import that adds transactions is recorded (``ImportBatch``) with the
+file's name and hash, and can be undone: ``undo_import`` deletes the
+transactions it added.
+
 Every row gets an import key, so importing the same or an overlapping file
 again adds nothing twice:
 
@@ -42,7 +46,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -58,16 +62,31 @@ from financeproject.ingest.rules import load_rules, match
 from financeproject.ingest.statement import Statement, StatementLine
 from financeproject.ledger.accounts import find_account
 from financeproject.ledger.db import UNCATEGORIZED_EXPENSE, UNCATEGORIZED_INCOME
+from financeproject.ledger.history import (
+    EDIT,
+    IMPORT,
+    RECATEGORIZE,
+    UNDO_IMPORT,
+    log_change,
+)
 from financeproject.ledger.installments import (
     matching_plan,
     record_installment_purchase,
 )
 from financeproject.ledger.loans import loan_by_reference, owed, record_payment
-from financeproject.ledger.models import Account, Loan, Posting, Transaction
+from financeproject.ledger.models import (
+    Account,
+    Change,
+    ImportBatch,
+    ImportLink,
+    Loan,
+    Posting,
+    Transaction,
+)
 from financeproject.ledger.queries import account_balance
 from financeproject.ledger.transactions import Leg, add_transaction, opening_balance
 
-HOW_FILE, HOW_UNCATEGORIZED, HOW_LOAN = "file", "uncategorized", "loan"
+HOW_FILE, HOW_UNCATEGORIZED, HOW_LOAN, HOW_USER = "file", "uncategorized", "loan", "chosen"
 HOW_INSTALLMENT, HOW_TRANSFER, HOW_PAYMENT = "installment", "transfer", "card payment"
 TRANSFER_DAYS = 3
 """Two sides of a transfer are taken for the same transfer up to this many days apart."""
@@ -155,6 +174,8 @@ class ImportResult:
     """Loan numbers on installment lines that no defined loan has, with their line counts."""
     older_installments: int = 0
     """Card installments of purchases made before the ledger, booked one by one."""
+    batch_id: int | None = None
+    """The import's record, when it added transactions."""
 
     @property
     def new(self) -> int:
@@ -245,13 +266,16 @@ def import_rows(
     use_model: bool = True,
     min_confidence: float = learn.DEFAULT_MIN_CONFIDENCE,
     opening: tuple[date, Decimal] | None = None,
+    overrides: dict[int, str] | None = None,
 ) -> ImportResult:
     """Categorize, check and (unless ``dry_run`` or any row is invalid) write ``rows``.
 
     ``account`` is used for rows without one. ``opening`` adds an opening
-    balance to ``account`` in the same all-or-nothing step.
+    balance to ``account`` in the same all-or-nothing step. ``overrides`` maps
+    line numbers to the counter accounts chosen for them (in a preview).
     """
     result = ImportResult(Path(path), source, errors=list(errors or []), opening=opening)
+    overrides = overrides or {}
     rules = load_rules(session)
     model = learn.train(session) if use_model else None
     default_account = find_account(session, account) if account else None
@@ -287,6 +311,8 @@ def import_rows(
                     _check_loan_row(session, loan, row)
                 counter = loan.account
                 how = f"{HOW_LOAN} {loan.name}" + (f" #{row.installment}" if row.installment else "")
+            elif row.line in overrides:
+                counter, how = find_account(session, overrides[row.line]), HOW_USER
             elif row.counter_account:
                 counter, how = find_account(session, row.counter_account), row.how
             elif rule := match(rules, " ".join(filter(None, [row.description, row.payee]))):
@@ -321,15 +347,18 @@ def import_rows(
     if result.errors or dry_run:
         return result
 
+    created: list[Transaction] = []
     try:
         if opening is not None:
             if default_account is None:
                 raise FinanceError("An opening balance needs --account.")
-            opening_balance(session, default_account, opening[1], opening[0], "Opening balance (from the bank statement)")
+            created.append(
+                opening_balance(session, default_account, opening[1], opening[0], "Opening balance (from the bank statement)")
+            )
         for row, acc, counter, key in pending:
             try:
                 if row.loan_id is not None:
-                    record_payment(
+                    tx = record_payment(
                         session,
                         session.get(Loan, row.loan_id),
                         row.date,
@@ -342,9 +371,10 @@ def import_rows(
                         import_key=key,
                         partial=True,
                     )
+                    created.append(tx)
                     continue
                 if row.installments is not None:
-                    record_installment_purchase(
+                    tx = record_installment_purchase(
                         session,
                         -row.amount,
                         counter,
@@ -357,8 +387,9 @@ def import_rows(
                         source=transaction_source,
                         import_key=key,
                     )
+                    created.append(tx)
                     continue
-                add_transaction(
+                tx = add_transaction(
                     session,
                     row.date,
                     row.description,
@@ -371,6 +402,7 @@ def import_rows(
                     source=transaction_source,
                     import_key=key,
                 )
+                created.append(tx)
             except FinanceError as exc:
                 result.errors.append(f"line {row.line}: {exc}")
     except FinanceError as exc:
@@ -379,7 +411,113 @@ def import_rows(
         session.rollback()
         return result
     result.written = True
+    if created:
+        result.batch_id = record_batch(session, Path(path), source, default_account, created).id
     return result
+
+
+def file_hash(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def record_batch(
+    session: Session, path: Path, source: str, account: Account | None, transactions: list[Transaction]
+) -> ImportBatch:
+    """Record an import and the transactions it added."""
+    batch = ImportBatch(
+        file_name=Path(path).name[:255],
+        file_sha256=file_hash(path),
+        source=source[:80],
+        account=account,
+        added=len(transactions),
+    )
+    batch.links = [ImportLink(transaction=tx) for tx in transactions]
+    session.add(batch)
+    session.flush()
+    where = f" into {account.path}" if account else ""
+    log_change(
+        session, IMPORT, f"Imported {batch.file_name}{where}: {len(transactions)} transactions", import_id=batch.id
+    )
+    return batch
+
+
+@dataclass(frozen=True)
+class ImportView:
+    id: int
+    at: datetime
+    """Local time."""
+    file_name: str
+    source: str
+    account: str | None
+    added: int
+    left: int
+    """Transactions of the import still in the ledger."""
+    edited: int
+    """Of those, how many were edited or recategorized after the import."""
+    statement_end: date | None
+    statement_balance: Decimal | None
+    undone_at: datetime | None
+
+
+def _local(moment: datetime | None) -> datetime | None:
+    return moment.replace(tzinfo=UTC).astimezone() if moment else None
+
+
+def import_views(session: Session, limit: int = 100) -> list[ImportView]:
+    """The recorded imports, newest first."""
+    out = []
+    for batch in session.scalars(select(ImportBatch).order_by(ImportBatch.id.desc()).limit(limit)):
+        ids = list(session.scalars(select(ImportLink.transaction_id).where(ImportLink.import_id == batch.id)))
+        edited = 0
+        if ids:
+            edited = session.scalar(
+                select(func.count(func.distinct(Change.transaction_id))).where(
+                    Change.transaction_id.in_(ids), Change.action.in_((EDIT, RECATEGORIZE))
+                )
+            )
+        out.append(
+            ImportView(
+                batch.id,
+                _local(batch.at) or datetime.now().astimezone(),
+                batch.file_name,
+                batch.source,
+                batch.account.path if batch.account else None,
+                batch.added,
+                len(ids),
+                edited,
+                batch.statement_end,
+                batch.statement_balance,
+                _local(batch.undone_at),
+            )
+        )
+    return out
+
+
+def undo_import(session: Session, import_id: int) -> int:
+    """Delete the transactions an import added; returns how many."""
+    batch = session.get(ImportBatch, import_id)
+    if batch is None:
+        raise FinanceError(f"No import #{import_id}")
+    if batch.undone_at is not None:
+        raise FinanceError(f"Import #{import_id} was already undone.")
+    transactions = list(
+        session.scalars(select(Transaction).join(ImportLink).where(ImportLink.import_id == batch.id))
+    )
+    for tx in transactions:
+        session.delete(tx)
+    batch.undone_at = datetime.now(UTC).replace(tzinfo=None)
+    session.flush()
+    session.expire(batch, ["links"])
+    log_change(
+        session,
+        UNDO_IMPORT,
+        f"Undid import #{batch.id} ({batch.file_name}): {len(transactions)} transactions deleted",
+        import_id=batch.id,
+    )
+    return len(transactions)
 
 
 def has_postings(session: Session, account: Account) -> bool:
@@ -412,6 +550,7 @@ def import_statement(
     use_model: bool = True,
     min_confidence: float = learn.DEFAULT_MIN_CONFIDENCE,
     payments_from: str | Account | None = None,
+    overrides: dict[int, str] | None = None,
 ) -> ImportResult:
     """Import a bank statement into its account and compare the balances afterwards.
 
@@ -478,9 +617,13 @@ def import_statement(
         use_model=use_model,
         min_confidence=min_confidence,
         opening=opening,
+        overrides=overrides,
     )
     result.unknown_loans = dict(unknown_loans)
     result.older_installments = sum(1 for r in result.rows if not r.duplicate and r.line in older)
+    if result.batch_id is not None and statement.closing_balance is not None:
+        batch = session.get(ImportBatch, result.batch_id)
+        batch.statement_end, batch.statement_balance = statement.end, statement.closing_balance
     if statement.closing_balance is not None and not result.errors:
         commodity = acc.commodity_code or "TRY"
         ledger = account_balance(session, acc, statement.end).get(commodity, Decimal(0))

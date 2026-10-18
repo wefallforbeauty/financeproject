@@ -36,6 +36,13 @@ from financeproject.ledger.accounts import (
     trading_account,
 )
 from financeproject.ledger.db import OPENING_ACCOUNT
+from financeproject.ledger.history import (
+    DELETE,
+    EDIT,
+    RECATEGORIZE,
+    log_change,
+    snapshot,
+)
 from financeproject.ledger.models import Account, Commodity, Posting, Transaction
 
 MANUAL_SOURCE = "manual"
@@ -318,13 +325,38 @@ def record_split(session: Session, account: str | Account, ratio: Decimal, on: d
     )
 
 
-def delete_transaction(session: Session, transaction_id: int) -> Transaction:
+def _get(session: Session, transaction_id: int) -> Transaction:
     tx = session.get(Transaction, transaction_id)
     if tx is None:
         raise LedgerError(f"No transaction #{transaction_id}")
+    return tx
+
+
+def _label(tx: Transaction) -> str:
+    return f"#{tx.id} {tx.date} {tx.description}"
+
+
+def delete_transaction(session: Session, transaction_id: int) -> Transaction:
+    """Delete a transaction; the change history keeps a copy of it."""
+    tx = _get(session, transaction_id)
+    log_change(session, DELETE, f"Deleted {_label(tx)}", transaction_id=tx.id, before=snapshot(tx))
     session.delete(tx)
     session.flush()
     return tx
+
+
+def move_posting(session: Session, posting: Posting, account: Account, action: str = RECATEGORIZE) -> None:
+    """Move one leg to another account, recording the change."""
+    if posting.account_id == account.id:
+        return
+    tx = posting.transaction
+    before = snapshot(tx)
+    old = posting.account.path
+    posting.account = account
+    session.flush()
+    log_change(
+        session, action, f"{_label(tx)}: {old} → {account.path}", transaction_id=tx.id, before=before, after=snapshot(tx)
+    )
 
 
 def recategorize(session: Session, transaction_id: int, account: str | Account) -> Transaction:
@@ -333,9 +365,7 @@ def recategorize(session: Session, transaction_id: int, account: str | Account) 
     A simple transaction has one balance-sheet leg and one income or expense
     leg; that is what imports and the expense and income commands create.
     """
-    tx = session.get(Transaction, transaction_id)
-    if tx is None:
-        raise LedgerError(f"No transaction #{transaction_id}")
+    tx = _get(session, transaction_id)
     target = find_account(session, account)
     if target.type not in (INCOME, EXPENSE):
         raise LedgerError(f"The new category must be an income or expense account: {target.path}")
@@ -347,6 +377,152 @@ def recategorize(session: Session, transaction_id: int, account: str | Account) 
     leg = categories[0]
     if target.commodity_code and target.commodity_code != leg.commodity_code:
         raise LedgerError(f"{target.path} holds only {target.commodity_code}; this transaction is in {leg.commodity_code}.")
-    leg.account = target
-    session.flush()
+    move_posting(session, leg, target)
     return tx
+
+
+SIMPLE, TRANSFER, OTHER = "simple", "transfer", "other"
+"""The shapes of a transaction for editing: one account and one category, two accounts, or more legs."""
+
+
+def shape(tx: Transaction) -> str:
+    if len(tx.postings) == 2:
+        a, b = tx.postings
+        sides = [p.account.type in (ASSET, LIABILITY) for p in tx.postings]
+        if sides.count(True) == 1 and all(p.account.type in (ASSET, LIABILITY, INCOME, EXPENSE) for p in tx.postings):
+            return SIMPLE
+        if all(sides) and a.commodity_code == b.commodity_code:
+            return TRANSFER
+    return OTHER
+
+
+def _sides(tx: Transaction) -> tuple[Posting, Posting]:
+    """The balance-sheet leg and the category leg of a simple transaction."""
+    a, b = tx.postings
+    return (a, b) if a.account.type in (ASSET, LIABILITY) else (b, a)
+
+
+def _check_postings(session: Session, tx: Transaction) -> None:
+    sums: dict[str, Decimal] = defaultdict(Decimal)
+    for p in tx.postings:
+        account = p.account
+        if account.opened_on and tx.date < account.opened_on:
+            raise LedgerError(f"{account.path} was opened on {account.opened_on}; a transaction on {tx.date} is not allowed.")
+        if account.closed_on and tx.date > account.closed_on:
+            raise LedgerError(f"{account.path} was closed on {account.closed_on}; a transaction on {tx.date} is not allowed.")
+        commodity = session.get(Commodity, p.commodity_code)
+        check_decimals(p.amount, commodity.decimals, commodity.code)
+        sums[p.commodity_code] += p.amount
+    if any(v != 0 for v in sums.values()):
+        raise UnbalancedTransaction("The transaction does not balance after the change.")
+
+
+_KEEP = object()
+
+
+def _describe_change(before: dict, after: dict) -> str:
+    parts = []
+    for field in ("date", "description", "payee", "note"):
+        if before[field] != after[field]:
+            parts.append(f"{field} {before[field] or '—'} → {after[field] or '—'}")
+    legs_before = {(leg["account"], leg["amount"]) for leg in before["legs"]}
+    legs_after = {(leg["account"], leg["amount"]) for leg in after["legs"]}
+    if legs_before != legs_after:
+        parts.append("legs " + ", ".join(f"{a} {x}" for a, x in sorted(legs_after)))
+    return "; ".join(parts)
+
+
+def update_transaction(
+    session: Session,
+    transaction_id: int,
+    *,
+    on=_KEEP,
+    description=_KEEP,
+    payee=_KEEP,
+    note=_KEEP,
+    amount=_KEEP,
+    category=_KEEP,
+    account=_KEEP,
+) -> Transaction:
+    """Change a transaction and record the change.
+
+    The date, description, payee and note of any transaction can change. The
+    amount (natural, positive), the category and the account of a simple
+    transaction can change too, and the amount of a transfer between two
+    accounts. Transactions with more legs (exchanges, loan payments) keep their
+    legs: delete them and enter them again. An installment purchase stays on
+    its card, and a new amount changes its plan's total.
+    """
+    tx = _get(session, transaction_id)
+    before = snapshot(tx)
+    saved = (
+        tx.date, tx.description, tx.payee, tx.note,
+        [(p, p.account, p.amount) for p in tx.postings],
+        tx.installment_plan.total if tx.installment_plan is not None else None,
+    )
+    try:
+        _apply_update(session, tx, on, description, payee, note, amount, category, account)
+    except Exception:
+        tx.date, tx.description, tx.payee, tx.note, legs, total = saved
+        for posting, account_, amount_ in legs:
+            posting.account, posting.amount = account_, amount_
+        if total is not None:
+            tx.installment_plan.total = total
+        session.flush()
+        raise
+    after = snapshot(tx)
+    if after != before:
+        log_change(session, EDIT, f"{_label(tx)}: {_describe_change(before, after)}", transaction_id=tx.id, before=before, after=after)
+    return tx
+
+
+def _apply_update(session: Session, tx: Transaction, on, description, payee, note, amount, category, account) -> None:
+    kind = shape(tx)
+    if on is not _KEEP:
+        tx.date = on
+    if description is not _KEEP:
+        if not description or not description.strip():
+            raise LedgerError("The description cannot be empty.")
+        tx.description = description.strip()
+    if payee is not _KEEP:
+        tx.payee = (payee or "").strip() or None
+    if note is not _KEEP:
+        tx.note = (note or "").strip() or None
+    legs_changed = any(x is not _KEEP for x in (amount, category, account))
+    if legs_changed and kind == OTHER:
+        raise LedgerError(
+            f"Only the date, description, payee and note of #{tx.id} can change: it has more than two legs. "
+            "Delete it and enter it again."
+        )
+    if kind == SIMPLE:
+        own, cat = _sides(tx)
+        if account is not _KEEP:
+            target = _balance_sheet_account(session, account, "The account")
+            if tx.installment_plan is not None and target.id != own.account_id:
+                raise LedgerError("An installment purchase stays on its card.")
+            if (target.commodity_code or own.commodity_code) != own.commodity_code:
+                raise LedgerError(f"{target.path} holds {target.commodity_code}; this transaction is in {own.commodity_code}.")
+            own.account = target
+        if category is not _KEEP:
+            target = find_account(session, category)
+            if target.type not in (INCOME, EXPENSE):
+                raise LedgerError(f"The category must be an income or expense account: {target.path}")
+            if target.commodity_code and target.commodity_code != cat.commodity_code:
+                raise LedgerError(f"{target.path} holds only {target.commodity_code}; this transaction is in {cat.commodity_code}.")
+            cat.account = target
+        if amount is not _KEEP:
+            _positive(amount)
+            own.amount = amount if own.amount > 0 else -amount
+            cat.amount = -own.amount
+            if tx.installment_plan is not None:
+                tx.installment_plan.total = amount
+    elif kind == TRANSFER:
+        if category is not _KEEP or account is not _KEEP:
+            raise LedgerError("A transfer has no category, and its accounts stay; delete it and enter it again to change them.")
+        if amount is not _KEEP:
+            _positive(amount)
+            a, b = tx.postings
+            a.amount = amount if a.amount > 0 else -amount
+            b.amount = -a.amount
+    session.flush()
+    _check_postings(session, tx)
