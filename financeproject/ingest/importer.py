@@ -191,7 +191,7 @@ class ImportResult:
 
     @property
     def uncategorized(self) -> int:
-        return sum(1 for r in self.rows if not r.duplicate and r.how == HOW_UNCATEGORIZED)
+        return sum(1 for r in self.rows if not r.duplicate and r.how.split(";")[0] == HOW_UNCATEGORIZED)
 
     @property
     def learned(self) -> int:
