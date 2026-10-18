@@ -201,4 +201,7 @@ def test_recurring_and_upcoming_on_the_demo(session):
     labels = [u.label for u in items]
     assert "Card installments (Sample Card)" in labels
     assert labels.count("VIDEO STREAMING") == 1
+    video = next(u for u in items if u.label == "VIDEO STREAMING")
+    assert (video.period, video.fixed, video.late) == ("monthly", found["VIDEO STREAMING"].fixed, False)
+    assert {u.account for u in items if u.kind == "installments"} == {"Sample Card"}
     assert all(date(2026, 10, 1) <= u.on <= date(2026, 11, 1) for u in items if u.kind == "recurring")
