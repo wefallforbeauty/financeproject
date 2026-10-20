@@ -59,6 +59,10 @@ class Ratio:
     status: str | None
     """``ok``, ``below`` (outside the benchmark), ``danger`` or ``None`` (no benchmark)."""
     note: str = ""
+    key: str = ""
+    """A stable name of the ratio, for an interface that words it in its own language."""
+    detail: dict = field(default_factory=dict)
+    """The parts of the note that change (inflation protection: its figures, or why there are none)."""
 
 
 @dataclass
@@ -125,26 +129,27 @@ def _debt_payments(session: Session, start: date, end: date, market: MarketData)
     return principal, loans, mortgage
 
 
-def _inflation_protection(session: Session, end: date, market: MarketData) -> tuple[float | None, str]:
+def _inflation_protection(session: Session, end: date, market: MarketData) -> tuple[float | None, str, dict]:
+    """The ratio, its note, and the note's parts (``reason`` when there is no ratio)."""
     deflator = market.deflator
     if deflator is None:
-        return None, "no CPI"
+        return None, "no CPI", {"reason": "no_cpi"}
     last = min(month_start(end), deflator.last_month)
     window_end = min(month_end(last), end)
     window_start = month_end(add_months(last, -12))
     first_cpi, last_cpi = add_months(last, -12), last
     if first_cpi < deflator.first_month:
-        return None, "the CPI does not go back a year"
+        return None, "the CPI does not go back a year", {"reason": "short_cpi"}
     nw0 = build_balance_sheet(session, window_start, market=market).net_worth
     nw1 = build_balance_sheet(session, window_end, market=market).net_worth
     if nw0.net.try_ <= 0:
-        return None, "no positive net worth a year earlier"
+        return None, "no positive net worth a year earlier", {"reason": "no_net_worth"}
     growth = float(nw1.net.try_ / nw0.net.try_ - 1) * 100
     inflation = (deflator.month_value(last_cpi) / deflator.month_value(first_cpi) - 1) * 100
     if inflation <= 0:
-        return None, "no inflation in the window"
+        return None, "no inflation in the window", {"reason": "no_inflation"}
     note = f"net worth {growth:+.1f} %, CPI {inflation:+.1f} % ({window_start} – {window_end})"
-    return growth / inflation, note
+    return growth / inflation, note, {"growth": growth, "inflation": inflation, "start": window_start, "end": window_end}
 
 
 def household_ratios(session: Session, end: date, months: int = 12, market: MarketData | None = None) -> RatioReport:
@@ -183,26 +188,26 @@ def household_ratios(session: Session, end: date, months: int = 12, market: Mark
     total_debt = _pct(report.loan_payments + report.mortgage_payments + report.installments_due, report.income)
     liquid_share = _pct(report.liquid, report.net_worth)
     investment_share = _pct(report.investments, report.net_worth)
-    protection, protection_note = _inflation_protection(session, end, market)
+    protection, protection_note, protection_detail = _inflation_protection(session, end, market)
 
     report.ratios = [
         Ratio("Emergency fund", emergency, "months", "≥ 2.5 months", _status(emergency, 2.5),
-              "liquid assets / monthly expenses (incl. loan principal)"),
+              "liquid assets / monthly expenses (incl. loan principal)", "emergency"),
         Ratio("Emergency fund, wider", emergency_wide, "months", "", None,
-              "also counting gold, funds and stocks (sellable within a week)"),
+              "also counting gold, funds and stocks (sellable within a week)", "emergency_wide"),
         Ratio("Savings rate", savings, "%", "≥ 10 %", _status(savings, 10, 0),
-              "(income − expenses) / income; below zero = spending more than income"),
+              "(income − expenses) / income; below zero = spending more than income", "savings"),
         Ratio("Non-mortgage debt payments", nonmortgage, "%", "≤ 15 %; danger ≥ 20 %",
               _status(nonmortgage, 15, 20, higher_is_better=False),
-              "loan payments and card installments / income"),
+              "loan payments and card installments / income", "nonmortgage"),
         Ratio("All debt payments", total_debt, "%", "≤ 35 %; danger ≥ 45 %",
-              _status(total_debt, 35, 45, higher_is_better=False), "including mortgage payments"),
-        Ratio("Liquid assets / net worth", liquid_share, "%", "≥ 15 %", _status(liquid_share, 15), ""),
+              _status(total_debt, 35, 45, higher_is_better=False), "including mortgage payments", "all_debt"),
+        Ratio("Liquid assets / net worth", liquid_share, "%", "≥ 15 %", _status(liquid_share, 15), "", "liquid_share"),
         Ratio("Investment assets / net worth", investment_share, "%", "≥ 50 %", _status(investment_share, 50),
-              "gold, funds, stocks, private pension"),
+              "gold, funds, stocks, private pension", "investment_share"),
         Ratio("Inflation protection", protection, "×", "≥ 2", _status(protection, 2, 1),
-              f"growth of net worth / CPI inflation; {protection_note}"),
+              f"growth of net worth / CPI inflation; {protection_note}", "inflation", protection_detail),
         Ratio("Debt / assets", _pct(report.liabilities, report.assets), "%", "", None,
-              "solvency: net worth below zero means insolvent (DeVaney & Lytton 1995)"),
+              "solvency: net worth below zero means insolvent (DeVaney & Lytton 1995)", "debt_assets"),
     ]
     return report

@@ -94,6 +94,7 @@ from financeproject.prices.store import (
     price_range,
     upsert_price,
 )
+from financeproject.reports.context import SOURCE_LABELS
 
 # emoji=False: account paths such as 'Assets:Bank:Checking' contain emoji codes (':bank:').
 console = Console(emoji=False)
@@ -1161,13 +1162,6 @@ def cpi(
 # --------------------------------------------------------------------------- reports
 
 
-SOURCE_LABELS = {
-    "tcmb": "TCMB forex buying",
-    "evds": "EVDS forex buying",
-    "frankfurter": "Frankfurter XAU/USD",
-    MANUAL: "entered by hand",
-    "synthetic": "made up (demo)",
-}
 CpiMethodOption = Annotated[str, typer.Option(help="interpolate or monthly")]
 
 
@@ -2053,9 +2047,8 @@ def loan_add(
     before the ledger) or the account's own transactions. Rates are as on the
     contract: the monthly interest rate without KKDF and BSMV.
     """
-    from financeproject.core.loans import ANNUITY, EQUAL_PRINCIPAL, implied_monthly_rate
-    from financeproject.errors import AccountNotFound
-    from financeproject.ledger.loans import DEFAULT_TAXES, LOAN_KINDS, add_loan
+    from financeproject.core.loans import ANNUITY, EQUAL_PRINCIPAL
+    from financeproject.ledger.loans import LOAN_KINDS, define_loan
 
     methods = {"annuity": ANNUITY, "equal-principal": EQUAL_PRINCIPAL}
     _check_choice(method, tuple(methods), "--method")
@@ -2066,41 +2059,23 @@ def loan_add(
         raise FinanceError("--owed needs --opening-on.")
     if count < 1:
         raise FinanceError("--count must be at least 1.")
+    if installment is not None and method != "annuity":
+        raise FinanceError("--installment works with equal installments (annuity); give --rate for equal principal.")
     with ledger(ctx) as s:
-        try:
-            acc = acc_mod.find_account(s, account)
-        except AccountNotFound:
-            if not account.strip().casefold().startswith("liabilities:"):
-                raise FinanceError(
-                    f"No account matches {account!r}. To create one give its full path, e.g. 'Liabilities:Loans:{name}'."
-                ) from None
-            acc = acc_mod.create_account(s, account, kind=kind, commodity="TRY")
-            console.print(f"Account created: {escape(acc.path)} ({kind})")
-        default_kkdf, default_bsmv = DEFAULT_TAXES.get(acc.kind, (Decimal(0), Decimal(0)))
-        k = _percent(kkdf, "--kkdf") if kkdf is not None else default_kkdf
-        b = _percent(bsmv, "--bsmv") if bsmv is not None else default_bsmv
-        p = amount(principal)
-        if rate is not None:
-            monthly = _percent(rate, "--rate")
-        else:
-            if method != "annuity":
-                raise FinanceError("--installment works with equal installments (annuity); give --rate for equal principal.")
-            try:
-                monthly = implied_monthly_rate(p, amount(installment), count, 1 + k + b)
-            except ValueError as exc:
-                raise FinanceError(str(exc)) from exc
-        loan = add_loan(
+        loan, created, _ = define_loan(
             s,
             name,
-            acc,
-            principal=p,
-            monthly_rate=monthly,
+            account,
+            principal=amount(principal),
             count=count,
             first_due=parse_date(first_due),
-            disbursed=parse_date(disbursed) if disbursed else None,
+            monthly_rate=_percent(rate, "--rate") if rate is not None else None,
+            installment=amount(installment) if installment is not None else None,
             method=methods[method],
-            kkdf=k,
-            bsmv=b,
+            kkdf=_percent(kkdf, "--kkdf") if kkdf is not None else None,
+            bsmv=_percent(bsmv, "--bsmv") if bsmv is not None else None,
+            kind=kind,
+            disbursed=parse_date(disbursed) if disbursed else None,
             fees=amount(fees),
             reference=reference,
             interest_account=interest_account,
@@ -2109,6 +2084,8 @@ def loan_add(
             opening_on=parse_date(opening_on) if opening_on else None,
             opening_owed=amount(owed) if owed is not None else None,
         )
+        if created is not None:
+            console.print(f"Account created: {escape(created.path)} ({kind})")
         _print_loan(loan, inferred=installment is not None)
 
 
