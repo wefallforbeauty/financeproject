@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Balance sheet") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("The same figures as the command line, on any day and in four units.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<form class="filters compact" method="get" action="/reports/balance-sheet">
+  <label class="field"><span>{{ _("On") }}</span><input type="date" name="date" value="{{ at.isoformat() }}"></label>
+  <label class="field"><span>{{ _("Owner") }}</span>
+    <select name="owner">
+      <option value="">{{ _("Everyone") }}</option>
+      <option value="shared" {% if owner == "shared" %}selected{% endif %}>{{ _("Shared") }}</option>
+      {% for p in people %}<option value="{{ p }}" {% if owner == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+    </select>
+  </label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+{% if bs.empty %}
+<div class="card"><div class="empty"><h2>{{ _("No account has a balance yet") }}</h2><p>{{ _("Add your accounts with what they hold today.") }}</p><a class="btn primary" href="/accounts">{{ _("Accounts") }}</a></div></div>
+{% else %}
+{% set u = bs.net_worth.net %}
+<section class="grid hero-row">
+  <article class="card">
+    <h2 class="label">{{ _("Net worth on {on}", on=at.isoformat()) }}</h2>
+    <p class="hero-value">{{ money(u.try_, 0) }}<span class="unit">TRY</span></p>
+    <dl class="units">
+      <dt>{{ _("Real TRY") }}</dt><dd>{% if u.real_try is not none %}{{ money(u.real_try, 0) }}{% else %}—{% endif %}</dd>
+      <dt>{{ _("US dollars") }}</dt><dd>{% if u.usd is not none %}{{ money(u.usd, 0) }} USD{% else %}—{% endif %}</dd>
+      <dt>{{ _("Grams of gold") }}</dt><dd>{% if u.gold_g is not none %}{{ money(u.gold_g, 1) }} g{% else %}—{% endif %}</dd>
+    </dl>
+    <ul class="list small mt">
+      {% if base_month %}<li><span>{{ _("Real TRY") }}</span><span class="sub">{{ _("in {month} prices", month=base_month.strftime("%Y-%m")) }}{% if bs.net_worth.converter.cpi_extrapolated %}; {{ _("no CPI after that yet") }}{% endif %}</span></li>{% endif %}
+      {% for code, label in [("USD", _("US dollars")), ("XAU_G", _("Grams of gold"))] %}
+      {% set p = prices[code] %}
+      <li><span>{{ label }}</span><span class="sub">{% if p %}{{ money(p.value, p.decimals) }} {{ p.unit }} · {{ p.as_of.isoformat() }} · {% for src in p.sources %}{{ _(src) }}{% if not loop.last %} × {% endif %}{% endfor %}{% else %}{{ _("no price") }}{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+  </article>
+  <article class="card">
+    <h2>{{ _("Liquidity") }}</h2>
+    {% set liq = bs.liquidity %}
+    <div class="table-wrap">
+    <table class="data">
+      <tbody>
+        {% for t, value in liq.by_tier.items() %}<tr><td>{{ _(tiers[t]) }}</td><td class="num">{{ money(value) }}</td></tr>{% endfor %}
+      </tbody>
+      <tfoot>
+        <tr><td>{{ _("Liquid assets (within a week)") }}</td><td class="num">{{ money(liq.liquid_assets) }}</td></tr>
+        <tr><td>{{ _("Short-term debt") }}</td><td class="num">{{ money(liq.short_term_debt) }}</td></tr>
+        <tr><td>{{ _("Liquid net assets") }}</td><td class="num">{{ money(liq.liquid_net) }}</td></tr>
+      </tfoot>
+    </table>
+    </div>
+    {% if not owner and bs.by_owner|length > 1 %}
+    <h3 class="mt">{{ _("By owner") }}</h3>
+    <ul class="list">{% for name, value in bs.by_owner|dictsort %}<li><span>{{ _("Shared") if name == "shared" else name }}</span><span class="num">{{ money(value) }} TRY</span></li>{% endfor %}</ul>
+    {% endif %}
+  </article>
+</section>
+
+{% if bs.net_worth.missing or bs.net_worth.stale %}
+<div class="alerts">
+  {% for item in bs.net_worth.missing %}<div class="alert critical"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _("No price, left out of net worth: {item}", item=item) }}</div><a href="/settings#prices">{{ _("Update prices") }}</a></div>{% endfor %}
+  {% for item in bs.net_worth.stale %}<div class="alert warning"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _("Price older than 7 days: {item}", item=item) }}</div></div>{% endfor %}
+</div>
+{% endif %}
+
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Assets") }}</h2></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Account") }}</th><th>{{ _("Unit") }}</th><th class="num">{{ _("Quantity") }}</th><th class="num wide-only">{{ _("Price (TRY)") }}</th><th class="num">{{ _("Value (TRY)") }}</th><th class="wide-only">{{ _("Liquidity") }}</th><th class="wide-only">{{ _("Owner") }}</th></tr></thead>
+    <tbody>
+    {% for v in bs.assets %}{% set p = v.position %}
+      <tr>
+        <td><a class="desc" href="/accounts/{{ p.account_id }}">{{ p.account|short }}</a></td>
+        <td class="sub">{{ p.commodity }}</td>
+        <td class="num">{{ money(p.quantity, decimals.get(p.commodity, 2)) }}</td>
+        <td class="num wide-only">{% if v.price is none %}—{% elif p.commodity != "TRY" %}{{ money(v.price.value, 4) }}{% endif %}{% if v.stale %} <span class="badge warning">{{ _("old: {on}", on=v.price.as_of.isoformat()) }}</span>{% endif %}</td>
+        <td class="num">{% if v.value is none %}<span class="badge critical">{{ _("no price") }}</span>{% else %}{{ money(v.value) }}{% endif %}</td>
+        <td class="sub wide-only">{{ _(tiers[p.tier]) if p.tier is not none else "" }}</td>
+        <td class="sub wide-only">{{ (_("Shared") if p.owner == "shared" else p.owner) if p.owner else "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><td colspan="3">{{ _("Total assets") }}</td><td class="wide-only"></td><td class="num">{{ money(bs.net_worth.assets) }}</td><td class="wide-only" colspan="2"></td></tr></tfoot>
+  </table>
+  </div>
+</article>
+
+{% if bs.liabilities %}
+<article class="card flush">
+  <div class="card-head"><h2>{{ _("Debts") }}</h2><a href="/debts">{{ _("Debts and loans") }}</a></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Account") }}</th><th>{{ _("Unit") }}</th><th class="num">{{ _("Owed") }}</th><th class="num">{{ _("Value (TRY)") }}</th><th class="wide-only">{{ _("Term") }}</th><th class="wide-only">{{ _("Owner") }}</th></tr></thead>
+    <tbody>
+    {% for v in bs.liabilities %}{% set p = v.position %}
+      <tr>
+        <td><a class="desc" href="/accounts/{{ p.account_id }}">{{ p.account|short }}</a></td>
+        <td class="sub">{{ p.commodity }}</td>
+        <td class="num">{{ money(-p.quantity, decimals.get(p.commodity, 2)) }}</td>
+        <td class="num">{% if v.value is none %}<span class="badge critical">{{ _("no price") }}</span>{% else %}{{ money(-v.value) }}{% endif %}</td>
+        <td class="sub wide-only">{{ _(terms[debt_term(p.kind)]) }}</td>
+        <td class="sub wide-only">{{ (_("Shared") if p.owner == "shared" else p.owner) if p.owner else "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><td colspan="3">{{ _("Total debts") }}</td><td class="num">{{ money(bs.net_worth.liabilities) }}</td><td class="wide-only" colspan="2"></td></tr></tfoot>
+  </table>
+  </div>
+</article>
+{% endif %}
+{% endif %}
+{% endblock %}

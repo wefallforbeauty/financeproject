@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Calculators") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Debts") }}</h1><p>{{ _("Before taking a credit: what an offer costs a year, and whether paying in installments is cheaper than cash.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Debts")) }}
+<div class="grid two">
+  <article class="card" id="offer">
+    <h2>{{ _("The cost of a credit offer") }}</h2>
+    <p class="small muted">{{ _("The annual cost rate (yıllık maliyet oranı): the rate at which the credit received equals the installments and fees paid.") }}</p>
+    {{ error_box(offer_error) }}
+    <form class="form" method="get" action="/debts/calculators#offer">
+      <input type="hidden" name="calc" value="offer">
+      <div class="row">
+        <label class="field"><span>{{ _("Credit received") }}</span><input type="text" inputmode="decimal" name="amount" value="{{ q.get('amount', '') if q.get('calc') == 'offer' else '' }}" required></label>
+        <label class="field"><span>{{ _("Number of installments") }}</span><input type="number" min="1" max="480" name="count" value="{{ q.get('count', '') if q.get('calc') == 'offer' else '' }}" required></label>
+      </div>
+      <label class="check"><input type="radio" name="mode" value="installment" {% if q.get('mode', 'installment') == 'installment' %}checked{% endif %}> {{ _("The installment offered") }}</label>
+      <div class="row">
+        <label class="field"><span>{{ _("Installment") }}</span><input type="text" inputmode="decimal" name="installment" value="{{ q.get('installment', '') if q.get('calc') == 'offer' else '' }}"></label>
+        <label class="field"><span>{{ _("A last installment that differs") }}</span><input type="text" inputmode="decimal" name="last" value="{{ q.get('last', '') }}"></label>
+      </div>
+      <label class="check"><input type="radio" name="mode" value="rate" {% if q.get('mode') == 'rate' %}checked{% endif %}> {{ _("Or the interest rate a month") }}</label>
+      <div class="row three">
+        <label class="field"><span>{{ _("Rate, % a month") }}</span><input type="text" inputmode="decimal" name="rate" value="{{ q.get('rate', '') if q.get('calc') == 'offer' else '' }}"></label>
+        <label class="field"><span>KKDF %</span><input type="text" inputmode="decimal" name="kkdf" value="{{ q.get('kkdf', '15') }}"></label>
+        <label class="field"><span>BSMV %</span><input type="text" inputmode="decimal" name="bsmv" value="{{ q.get('bsmv', '15') }}"></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>{{ _("Fees paid at the start") }}</span><input type="text" inputmode="decimal" name="fees" value="{{ q.get('fees', '') }}" placeholder="0"></label>
+        <label class="field"><span>{{ _("Months until the first installment") }}</span><input type="number" min="0" max="24" name="first_in" value="{{ q.get('first_in', '1') if q.get('calc') == 'offer' else '1' }}"></label>
+      </div>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Work it out") }}</button></div>
+    </form>
+    {% if offer %}
+    <div class="result mt">
+      <p class="stat-value">{{ percent(offer.rate, 2) }}</p>
+      <p class="delta">{{ _("annual cost rate") }}</p>
+      <dl class="kv mt">
+        <dt>{{ _("Paid back in all") }}</dt><dd>{{ money(offer.total) }} ({{ _("cost {amount}", amount=money(offer.cost)) }})</dd>
+        <dt>{{ _("Installments") }}</dt><dd>{{ offer.payments|length }} × {{ money(offer.payments[0]) }}{% if offer.payments[-1] != offer.payments[0] %} … {{ money(offer.payments[-1]) }}{% endif %}</dd>
+        <dt>{{ _("Cost a month") }}</dt><dd>{{ percent(offer.monthly, 3) }}</dd>
+        <dt>{{ _("A year") }}</dt><dd>{{ _("{simple} simple (× 12), {compounded} compounded", simple=percent(offer.simple, 2), compounded=percent(offer.rate, 2)) }}</dd>
+      </dl>
+    </div>
+    {% endif %}
+  </article>
+  <article class="card" id="cash">
+    <h2>{{ _("Cash or installments?") }}</h2>
+    <p class="small muted">{{ _("The installments are discounted at what the money earns while it stays with you; without a rate, at the CPI's inflation of the last twelve months (a comparison in real terms).") }}</p>
+    {{ error_box(cash_error) }}
+    <form class="form" method="get" action="/debts/calculators#cash">
+      <input type="hidden" name="calc" value="cash">
+      <div class="row">
+        <label class="field"><span>{{ _("Cash price") }}</span><input type="text" inputmode="decimal" name="cash" value="{{ q.get('cash', '') }}" required></label>
+        <label class="field"><span>{{ _("One installment") }}</span><input type="text" inputmode="decimal" name="installment" value="{{ q.get('installment', '') if q.get('calc') == 'cash' else '' }}" required></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>{{ _("Number of installments") }}</span><input type="number" min="1" max="480" name="count" value="{{ q.get('count', '') if q.get('calc') == 'cash' else '' }}" required></label>
+        <label class="field"><span>{{ _("Months until the first installment") }}</span><input type="number" min="0" max="24" name="first_in" value="{{ q.get('first_in', '1') if q.get('calc') == 'cash' else '1' }}"></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>{{ _("Money earns, % a month") }}</span><input type="text" inputmode="decimal" name="rate" value="{{ q.get('rate', '') if q.get('calc') == 'cash' else '' }}"></label>
+        <label class="field"><span>{{ _("or % a year") }}</span><input type="text" inputmode="decimal" name="annual_rate" value="{{ q.get('annual_rate', '') }}"></label>
+      </div>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Compare") }}</button></div>
+    </form>
+    {% if cash %}{% set r = cash.r %}
+    <div class="result mt">
+      <p class="stat-value">{{ _("The installments are cheaper") if r.installments_win else _("Cash is cheaper") }}</p>
+      <p class="delta">{{ _("In today's money the installments cost {pv}: {gap} less than cash.", pv=money(r.present_value), gap=money(cash.gap)) if r.installments_win else _("In today's money the installments cost {pv}: {gap} more than cash.", pv=money(r.present_value), gap=money(cash.gap)) }}</p>
+      <dl class="kv mt">
+        <dt>{{ _("In installments") }}</dt><dd>{{ r.count }} × {{ money(r.installment) }} = {{ money(r.total) }}</dd>
+        <dt>{{ _("Interest charged") }}</dt><dd>{% if r.implied_rate > 0.000000001 %}{{ _("{month} a month ({year} a year) over the cash price", month=percent(r.implied_rate, 2), year=percent(cash.implied_year, 2)) }}{% elif r.implied_rate < -0.000000001 %}{{ _("a discount of {month} a month", month=percent(-r.implied_rate, 2)) }}{% else %}{{ _("none") }}{% endif %}</dd>
+        <dt>{{ _("Money kept meanwhile") }}</dt><dd>{{ _("{month} a month ({year} a year; {source})", month=percent(cash.monthly, 2), year=percent(cash.yearly, 2), source=cash.source_text) }}</dd>
+      </dl>
+    </div>
+    {% endif %}
+  </article>
+</div>
+{% endblock %}

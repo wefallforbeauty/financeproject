@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box, account_options with context %}
+{% block title %}{{ loan.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ loan.name }}</h1><p>{{ loan.account.path }}{% if kind_label %} · {{ _(kind_label) }}{% endif %}{% if loan.reference %} · {{ _("number {ref}", ref=loan.reference) }}{% endif %}</p></div>
+  <div class="actions"><a class="btn" href="/debts">{{ _("All debts") }}</a></div>
+</header>
+{{ subtabs(tabs, tab, _("Debts")) }}
+{{ error_box(error) }}
+<section class="grid four">
+  <article class="card stat"><h2 class="label">{{ _("Owed today") }}</h2><p class="stat-value">{{ money(state.owed, 0) }}<span class="unit">TRY</span></p><p class="delta">{{ _("{paid} of {count} installments paid", paid=state.paid, count=loan.count) }}</p></article>
+  <article class="card stat"><h2 class="label">{{ _("Next installment") }}</h2>{% if state.next %}<p class="stat-value">{{ money(state.next.payment, 0) }}<span class="unit">TRY</span></p><p class="delta">{{ state.next.due.isoformat() }}{% if state.next.due < today %} · <span class="badge warning">{{ _("overdue") }}</span>{% endif %}</p>{% else %}<p class="stat-value">—</p>{% endif %}</article>
+  <article class="card stat"><h2 class="label">{{ _("Left to pay") }}</h2><p class="stat-value">{{ money(state.still_to_pay, 0) }}<span class="unit">TRY</span></p><p class="delta">{% if state.last_due %}{{ _("last {on}", on=state.last_due.isoformat()) }}{% endif %}{% if state.replanned %} · {{ _("worked out from the balance") }}{% endif %}</p></article>
+  <article class="card stat"><h2 class="label">{{ _("Annual cost rate") }}</h2><p class="stat-value">{{ percent(cost, 2) }}</p><p class="delta">{{ _("yıllık maliyet oranı") }}</p></article>
+</section>
+<div class="grid two">
+  <article class="card">
+    <h2>{{ _("Terms") }}</h2>
+    <dl class="kv">
+      <dt>{{ _("Principal") }}</dt><dd>{{ money(loan.principal) }} TRY</dd>
+      <dt>{{ _("Rate a month") }}</dt><dd>{{ percent(loan.monthly_rate, 3) }}{% if loan.kkdf or loan.bsmv %} · {{ _("with KKDF {kkdf} and BSMV {bsmv}: {gross}", kkdf=percent(loan.kkdf), bsmv=percent(loan.bsmv), gross=percent(terms.gross_rate, 3)) }}{% endif %}</dd>
+      <dt>{{ _("Installments") }}</dt><dd>{% if first and last %}{{ _("{n}, from {first} to {last}", n=loan.count, first=first.due.isoformat(), last=last.due.isoformat()) }}{% endif %}</dd>
+      <dt>{{ _("Paid back in all") }}</dt><dd>{{ money(totals.payment + loan.fees) }} TRY</dd>
+      <dt>{{ _("Interest and taxes") }}</dt><dd>{{ money(totals.interest + totals.kkdf + totals.bsmv) }} TRY</dd>
+      {% if loan.fees %}<dt>{{ _("Fees") }}</dt><dd>{{ money(loan.fees) }} TRY</dd>{% endif %}
+      {% if loan.start_number > 1 %}<dt>{{ _("Before the ledger") }}</dt><dd>{{ _("installments 1–{n} count as paid", n=loan.start_number - 1) }}</dd>{% endif %}
+    </dl>
+    <div class="result mt">
+      <p class="small muted">{{ _("The account and its transactions stay; only the plan and the link of the payments to it go. A backup is made first.") }}</p>
+      <form method="post" action="/debts/loans/{{ loan.id }}/delete" data-confirm="{{ _('Delete the terms of this loan?') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn small danger" type="submit">{{ _("Delete the terms") }}</button>
+      </form>
+    </div>
+  </article>
+  <article class="card">
+    <h2>{{ _("Pay") }}</h2>
+    <form class="form" method="post" action="/debts/loans/{{ loan.id }}/pay">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="field"><span>{{ _("Paid from") }}</span><select name="from" required>{{ account_options(options.money, form.get('from', ''), True, _("Choose…")) }}</select></label>
+      <div class="row">
+        <label class="field"><span>{{ _("Date") }}</span><input type="date" name="date" value="{{ form.get('date', today.isoformat()) }}"></label>
+        <label class="field"><span>{{ _("Amount") }}</span><input type="text" inputmode="decimal" name="amount" value="{{ form.get('amount', '') }}" placeholder="{{ _('the next installment') }}"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="extra" value="1" {% if form.get('extra') == '1' %}checked{% endif %}> {{ _("An early repayment outside the installments: all of it lowers the principal") }}</label>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Record the payment") }}</button></div>
+    </form>
+  </article>
+</div>
+<article class="card flush">
+  <div class="card-head"><h2>{{ _("Payment plan") }}</h2></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th class="num">#</th><th>{{ _("Due") }}</th><th class="num">{{ _("Installment") }}</th><th class="num">{{ _("Principal") }}</th><th class="num wide-only">{{ _("Interest") }}</th><th class="num wide-only">KKDF</th><th class="num wide-only">BSMV</th><th class="num wide-only">{{ _("Owed after") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}{% set i = row.item %}
+      <tr>
+        <td class="num sub">{{ i.number }}</td><td class="nowrap">{{ i.due.isoformat() }}</td>
+        <td class="num">{{ money(i.payment) }}</td><td class="num">{{ money(i.principal) }}</td>
+        <td class="num wide-only">{{ money(i.interest) }}</td><td class="num wide-only">{{ money(i.kkdf) }}</td><td class="num wide-only">{{ money(i.bsmv) }}</td>
+        <td class="num wide-only">{{ money(i.balance) }}</td>
+        <td>{% if row.status %}<span class="badge {{ row.tone }}">{{ _(row.status) }}{% if row.paid_on %} {{ row.paid_on.isoformat() }}{% endif %}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><td></td><td>{{ _("Total") }}</td><td class="num">{{ money(totals.payment) }}</td><td class="num">{{ money(totals.principal) }}</td><td class="num wide-only">{{ money(totals.interest) }}</td><td class="num wide-only">{{ money(totals.kkdf) }}</td><td class="num wide-only">{{ money(totals.bsmv) }}</td><td class="wide-only"></td><td></td></tr></tfoot>
+  </table>
+  </div>
+</article>
+{% endblock %}

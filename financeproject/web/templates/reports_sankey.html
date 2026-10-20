@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Where the money went") }}{% endblock %}
+{% block scripts %}<script src="/static/vendor/echarts.min.js?v=6.1.0" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("Income on the left flows into the budget, and out to the expense categories and savings on the right.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<form class="filters compact" method="get" action="/reports/sankey">
+  <label class="field"><span>{{ _("Month") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="month" value="{{ form.month }}"></label>
+  <label class="field"><span>{{ _("or from") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="start" value="{{ form.start }}"></label>
+  <label class="field"><span>{{ _("to") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="end" value="{{ form.end }}"></label>
+  <label class="field"><span>{{ _("Detail") }}</span>
+    <select name="depth">{% for d, label in [(1, _("Main groups")), (2, _("Categories")), (3, _("Subcategories"))] %}<option value="{{ d }}" {% if depth == d %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  </label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+<p class="muted small">{{ st.start.isoformat() }} – {{ st.end.isoformat() }} · {{ _("TRY on the day of each transaction") }}{% if data.grouped %} · {{ _("the smallest categories are grouped as Other") }}{% endif %}</p>
+{% if empty %}
+<div class="card"><div class="empty"><p>{{ _("No income or expenses in this period.") }}</p></div></div>
+{% else %}
+<article class="card mb">
+  <div class="chart tall" data-chart="sankey" data-source="sankey-data" role="img" aria-label="{{ chart.summary }}"></div>
+  <script type="application/json" id="sankey-data">{{ chart|tojson }}</script>
+  <details class="table-view">
+    <summary>{{ _("Show as a table") }}</summary>
+    <div class="grid two mt">
+      {% for title, nodes in [(_("In"), left), (_("Out"), right)] %}
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>{{ title }}</th><th class="num">TRY</th><th class="num">{{ _("Share of income") }}</th></tr></thead>
+          <tbody>{% for n in nodes %}<tr><td>{{ n.label }}</td><td class="num">{{ money(n.value, 0) }}</td><td class="num">{{ percent(n.share) }}</td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+</article>
+<section class="grid three">
+  <article class="card stat"><h2 class="label">{{ _("Income") }}</h2><p class="stat-value">{{ money(data.total_income, 0) }}<span class="unit">TRY</span></p></article>
+  <article class="card stat"><h2 class="label">{{ _("Expenses") }}</h2><p class="stat-value">{{ money(data.total_expenses, 0) }}<span class="unit">TRY</span></p></article>
+  <article class="card stat"><h2 class="label">{{ _("Saved") if data.saved >= 0 else _("From savings") }}</h2><p class="stat-value">{{ money(data.saved|abs, 0) }}<span class="unit">TRY</span></p>
+    <p class="delta">{% if data.total_income %}{{ _("{rate} of income", rate=percent(data.saved / data.total_income)) }}{% endif %}</p></article>
+</section>
+{% endif %}
+{% endblock %}

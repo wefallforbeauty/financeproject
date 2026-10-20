@@ -880,6 +880,208 @@ def test_ui_command(monkeypatch, tmp_path):
     assert result.exit_code == 0 and started == [(tmp_path / "l.sqlite", 9000, False)]
 
 
+# --------------------------------------------------------------------------- 04b: reports, debts, investments, rules
+
+
+@pytest.fixture(scope="session")
+def demo_file(tmp_path_factory) -> Path:
+    """The made-up demo household with made-up prices, built once; tests use copies of it."""
+    from financeproject.demo import create_demo_ledger
+
+    path = tmp_path_factory.mktemp("demo") / "demo.sqlite"
+    create_demo_ledger(path, add_months(month_start(TODAY), -12), TODAY, synthetic=True)
+    return path
+
+
+@pytest.fixture
+def demo_web(demo_file) -> TestClient:
+    import shutil
+
+    path = config.data_dir() / "demo-copy.sqlite"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(demo_file, path)
+    return make_client(path)
+
+
+REPORT_PAGES = [
+    "/reports/balance-sheet", "/reports/income", "/reports/income?real=1&depth=1&months=3", "/reports/cash-flow",
+    "/reports/cash-flow?real=1", "/reports/sankey", "/reports/change", "/reports/change?unit=usd", "/reports/change?unit=real",
+    "/reports/ratios", "/reports/recurring", "/reports/recurring?all=1", "/debts", "/debts/loans/new", "/debts/installments",
+    "/debts/payoff", "/debts/calculators", "/investments", "/investments/risk?window=60", "/investments/concentration",
+    "/rules",
+]
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_every_report_page_renders(demo_web, language):
+    config.save_setting("display", "language", language)
+    assert demo_web.get("/reports", follow_redirects=False).headers["location"] == "/reports/balance-sheet"
+    loan = demo_web.get("/debts").text
+    loans = sorted(set(re.findall(r'href="/debts/loans/(\d+)"', loan)))
+    assert loans, "the demo has a loan"
+    for page in [*REPORT_PAGES, *(f"/debts/loans/{n}" for n in loans)]:
+        answer = demo_web.get(page)
+        assert answer.status_code == 200, (page, answer.text[:300])
+        assert f'<html lang="{language}"' in answer.text, page
+    if language == "tr":
+        assert "Acil durum fonu" in demo_web.get("/reports/ratios").text
+
+
+def test_reports_on_a_small_ledger(web):
+    page = web.get("/reports/balance-sheet").text
+    assert "58,950" in page and "Bank:Checking" in page and "Credit Card:Bonus" in page and "1,250.40" in page
+    assert "Liquid net assets" in page
+    page = web.get("/reports/income", params={"start": LAST_MONTH.strftime("%Y-%m"), "end": LAST_MONTH.strftime("%Y-%m")}).text
+    chart = json.loads(re.search(r'<script type="application/json" id="income-data">(.*?)</script>', page, re.DOTALL).group(1))
+    assert chart["categories"] == [LAST_MONTH.strftime("%Y-%m")]
+    assert [s["values"] for s in chart["series"]] == [[40000.0], [1550.4]]
+    assert "Food" in page and "40,000" in page and "+38,450" in page  # net saving
+    page = web.get("/reports/sankey", params={"month": LAST_MONTH.strftime("%Y-%m")}).text
+    data = json.loads(re.search(r'<script type="application/json" id="sankey-data">(.*?)</script>', page, re.DOTALL).group(1))
+    assert [n["label"] for n in data["left"]] == ["Salary"] and data["budget"]["value"] == 40000.0
+    assert {n["label"]: n["role"] for n in data["right"]}["Saved"] == "savings"
+    page = web.get("/reports/change", params={"month": LAST_MONTH.strftime("%Y-%m")}).text
+    assert "+40,000" in page and "Net saving" in page
+    assert web.get("/reports/income", params={"start": "2026-09", "end": "2026-03"}).status_code == 400
+    assert web.get("/reports/change", params={"unit": "euro"}).status_code == 400
+    assert web.get("/reports/income", params={"start": "not a month"}).status_code == 400
+
+
+def test_add_pay_and_delete_a_loan(web, ledger):
+    first_due = add_months(month_start(TODAY), 1) + timedelta(days=14)
+    answer = post(web, "/debts/loans/new", {
+        "name": "Car loan", "new_account": "Liabilities:Loans:Car", "kind": "vehicle_loan", "principal": "120000",
+        "count": "24", "first_due": first_due.isoformat(), "terms": "rate", "rate": "2.99", "method": "annuity",
+        "start": "new", "paid_into": "Assets:Bank:Checking", "reference": "99-1",
+    })
+    assert answer.status_code == 303, answer.text[:500]
+    page = web.get(answer.headers["location"]).text
+    assert "Loan added: Car loan" in page and "Payment plan" in page and "Annual cost rate" in page and ">24<" in page
+    number = int(answer.headers["location"].rsplit("/", 1)[1])
+    with opened(ledger) as s:
+        assert account_balance(s, find_account(s, "Liabilities:Loans:Car"), TODAY) == {"TRY": D(-120000)}
+    answer = post(web, f"/debts/loans/{number}/pay", {"from": "Assets:Bank:Checking", "date": TODAY.isoformat()})
+    assert answer.status_code == 303
+    page = web.get(f"/debts/loans/{number}").text
+    assert "Payment #" in page and "interest and taxes" in page and "paid" in page
+    assert "Car loan" in web.get("/debts").text
+    answer = post(web, f"/debts/loans/{number}/delete")
+    assert answer.headers["location"] == "/debts" and list(config.backup_dir().glob("*.sqlite"))
+    assert "The terms of Car loan were deleted" in web.get("/debts").text
+    page = web.get("/debts").text
+    assert "Car loan" not in page and "Loans:Car" in page  # the terms are gone, the account and its debt stay
+    with opened(ledger) as s:
+        assert find_account(s, "Liabilities:Loans:Car") is not None
+
+
+def test_a_loan_from_its_installment_and_form_mistakes(web):
+    first_due = add_months(month_start(TODAY), 1)
+    base = {"name": "Old loan", "principal": "100000", "count": "24", "first_due": first_due.isoformat(), "start": "ledger"}
+    answer = post(web, "/debts/loans/new", {**base, "terms": "rate", "rate": "3"})
+    assert answer.status_code == 400 and "Choose the loan&#39;s account" in answer.text and 'value="Old loan"' in answer.text
+    answer = post(web, "/debts/loans/new", {**base, "new_account": "Loans:Old", "terms": "rate", "rate": "3"})
+    assert answer.status_code == 400 and "full path" in answer.text
+    answer = post(web, "/debts/loans/new", {**base, "new_account": "Liabilities:Loans:Old", "terms": "installment",
+                                            "installment": "6924.20", "method": "equal-principal"})
+    assert answer.status_code == 400 and "equal installments only" in answer.text
+    answer = post(web, "/debts/loans/new", {**base, "new_account": "Liabilities:Loans:Old", "terms": "installment", "installment": "6924.20"})
+    assert answer.status_code == 303
+    page = web.get(answer.headers["location"]).text
+    assert "3.490%" in page and "4.537%" in page  # the rate worked out from the installment, without and with the taxes
+
+
+def test_paying_off_and_the_calculators(web, ledger):
+    post(web, "/debts/loans/new", {
+        "name": "Car loan", "new_account": "Liabilities:Loans:Car", "kind": "vehicle_loan", "principal": "50000",
+        "count": "12", "first_due": (add_months(month_start(TODAY), 1)).isoformat(), "terms": "rate", "rate": "3",
+        "start": "new", "paid_into": "Assets:Bank:Checking",
+    })
+    page = web.get("/debts/payoff").text
+    assert "Give a monthly budget" in page and 'name="rate:Liabilities:Credit Card:Bonus"' in page
+    page = web.get("/debts/payoff", params={"budget": "9000", "rate:Liabilities:Credit Card:Bonus": "4.25",
+                                            "min:Liabilities:Credit Card:Bonus": "500"}).text
+    assert "Avalanche: highest rate first" in page and "Snowball: smallest debt first" in page and "months" in page
+    answer = web.get("/debts/payoff", params={"budget": "100"})
+    assert answer.status_code == 400 and "does not cover the least payments" in answer.text
+    # İş Bankası's worked example of the annual cost rate: 13.75 %
+    page = web.get("/debts/calculators", params={"calc": "offer", "amount": "10000", "count": "12", "mode": "installment",
+                                                 "installment": "888.49", "last": "888.47", "fees": "50", "first_in": "1"}).text
+    assert "13.75%" in page
+    page = web.get("/debts/calculators", params={"calc": "cash", "cash": "34000", "installment": "6000", "count": "6",
+                                                 "first_in": "1", "rate": "2.5"}).text
+    assert "The installments are cheaper" in page and "33,048.75" in page
+    assert web.get("/debts/calculators", params={"calc": "offer", "amount": "1000", "count": "0"}).status_code == 400
+
+
+def test_card_installments_page(web, ledger):
+    from financeproject.ledger.installments import record_installment_purchase
+
+    with opened(ledger) as s:
+        record_installment_purchase(s, D(9000), "Groceries", "Bonus", LAST_MONTH + timedelta(days=3), "Fridge", 3)
+    page = web.get("/debts/installments").text
+    assert "Fridge" in page and "3,000.00" in page and "Due in the coming months" in page
+
+
+def test_rules_from_the_interface(web, ledger):
+    assert "No rules yet" in web.get("/rules").text
+    answer = post(web, "/rules", {"pattern": "kiosk", "account": "Expenses:Food:Groceries", "priority": "5"})
+    assert answer.status_code == 303
+    page = web.get("/rules").text
+    assert "Rule #1: &#39;kiosk&#39; → Expenses:Food:Groceries" in page and "<code>kiosk</code>" in page
+    assert post(web, "/rules/apply").headers["location"] == "/rules"
+    assert "1 transaction categorized by the rules." in web.get("/rules").text
+    with opened(ledger) as s:
+        tx = s.get(Transaction, transaction_id(ledger, "KIOSK 99"))
+        assert "Expenses:Food:Groceries" in {p.account.path for p in tx.postings}
+    assert post(web, "/rules", {"pattern": "(unclosed", "account": "Expenses:Food:Groceries", "regex": "1"}).status_code == 400
+    assert post(web, "/rules", {"pattern": "x", "account": "Expenses:Food:Groceries", "priority": "high"}).status_code == 400
+    assert post(web, "/rules/1/delete").status_code == 303
+    assert "Rule #1 deleted." in web.get("/rules").text and "No rules yet" in web.get("/rules").text
+    assert 'href="/rules"' in web.get("/categorize").text  # the review links to the rules
+
+
+def test_investments_with_and_without_investment_accounts(web, demo_web):
+    page = web.get("/investments").text
+    assert "No investment accounts" in page
+    page = demo_web.get("/investments").text
+    assert "Time-weighted" in page and "Money-weighted a year" in page and "Real TRY" in page
+    page = demo_web.get("/investments", params={"account": ["Assets:Investments"]}).text
+    assert "Investments:Demo Fund" in page and "Gold:Gram Gold" not in page.split("<tbody>", 1)[1]
+    page = demo_web.get("/investments/risk").text
+    assert "Volatility a year" in page and "Expected shortfall" in page
+    page = demo_web.get("/investments/concentration", params={"threshold": "10"}).text
+    assert "Herfindahl–Hirschman" in page and "in one" in page and "Deposit insurance" in page
+
+
+def test_correlation_matrix_and_inflation_source():
+    from financeproject.reports.debt import Inflation
+    from financeproject.web.views.debts import inflation_source
+    from financeproject.web.views.investments import correlation_matrix
+
+    rows = correlation_matrix({("A", "B"): 0.5, ("A", "C"): None, ("B", "C"): -0.25})
+    assert [name for name, _ in rows] == ["A", "B", "C"]
+    assert rows[0][1] == [1.0, 0.5, None] and rows[2][1] == [None, -0.25, 1.0]
+    tr = translator("tr")
+    cpi = Inflation(0.297, "CPI, 12 months to 2026-09", date(2026, 9, 1))
+    assert inflation_source(cpi, tr) == "TÜFE, 2026-09 itibarıyla son 12 ay"
+    assert inflation_source(cpi, translator("en")) == "CPI, 12 months to 2026-09"
+    assert inflation_source("given", tr) == inflation_source(Inflation(0.2, "given"), tr) == "girilen"
+
+
+def test_concentration_flags_in_turkish():
+    from financeproject.reports.investments import InsuredDeposit, Share
+    from financeproject.web.views.investments import concentration_flags
+
+    config.save_setting("display", "language", "tr")
+    report = SimpleNamespace(
+        by_holding=[Share("DEMO.FUND", D(70), 0.7)], by_institution=[Share("Bank A", D(70), 0.7)], by_currency=[],
+        currencies=frozenset(), threshold=0.5, deposits=[InsuredDeposit("shared", "Bank A", D(1500000), D(1200000))],
+    )
+    flags = concentration_flags(report, translator("tr"))
+    assert flags[0] == "Tek bir varlıkta %70: DEMO.FUND" and flags[1].startswith("Tek bir kurumda %70")
+    assert "300.000,00" not in flags[2] and "300,000.00" in flags[2]  # the number format, not the language
+
+
 # --------------------------------------------------------------------------- translation and bundled files
 
 CALL = re.compile(
@@ -909,6 +1111,12 @@ def interface_texts() -> tuple[set[str], set[str]]:
     texts |= {group for group, _ in kind_groups()} | {label for _, kinds in kind_groups() for _, label in kinds}
     texts |= {title for _, title in SECTIONS} | {label for _, label in UNITS} | set(ACTION_LABELS.values())
     texts |= {period.name for period in PERIODS}
+    from financeproject.reports.context import SOURCE_LABELS
+    from financeproject.web.views import debts, investments, reports, rules
+
+    for module in (reports, debts, investments, rules):
+        texts |= set(module.TEXTS)
+    texts |= set(SOURCE_LABELS.values())
     return texts, singular
 
 

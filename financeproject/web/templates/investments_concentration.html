@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, share_bar with context %}
+{% block title %}{{ _("Concentration") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Investments") }}</h1><p>{{ _("Where the money is: shares by holding, bank and currency, and deposits against the insurance limit.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Investments")) }}
+<form class="filters compact stack" method="get" action="/investments/concentration">
+  <div class="filters compact">
+    <label class="field"><span>{{ _("On") }}</span><input type="date" name="date" value="{{ at.isoformat() }}"></label>
+    <label class="field"><span>{{ _("Flag above, %") }}</span><input type="number" min="1" max="99" name="threshold" value="{{ threshold }}"></label>
+    <label class="field"><span>{{ _("Insured per person and bank") }}</span><input type="text" inputmode="decimal" name="insured_limit" value="{{ form.insured_limit }}" placeholder="{{ _('TMSF limit of the year') }}"></label>
+    <button class="btn" type="submit">{{ _("Show") }}</button>
+  </div>
+  <details class="more" {% if chosen %}open{% endif %}>
+    <summary>{{ _("Accounts") }}{% if chosen %} ({{ chosen|length }}){% else %}: {{ _("every financial asset") }}{% endif %}</summary>
+    <div class="checks">{% for a in assets %}<label class="check"><input type="checkbox" name="account" value="{{ a.path }}" {% if a.path in chosen %}checked{% endif %}> {{ a.path|short }}</label>{% endfor %}</div>
+  </details>
+</form>
+<p class="muted small">{{ _("{value} TRY in {n} accounts", value=money(report.total), n=report.accounts|length) }}</p>
+<div class="alerts">
+  {% for f in flags %}<div class="alert warning"><span class="icon" aria-hidden="true">!</span><div class="text">{{ f }}</div></div>{% else %}
+  <div class="alert ok"><span class="icon" aria-hidden="true">✓</span><div class="text">{{ _("No holding, institution or currency is over {n}%, and no deposits are over the insured limit.", n=threshold) }}</div></div>
+  {% endfor %}
+</div>
+<section class="grid three">
+  {% for title, shares in [(_("Holding"), report.by_holding), (_("Institution"), report.by_institution), (_("Currency"), report.by_currency)] %}
+  <article class="card flush">
+    <div class="card-head"><h2>{{ title }}</h2></div>
+    <div class="table-wrap">
+    <table class="data">
+      <tbody>{% for sh in shares %}<tr><td>{{ _("(no institution)") if sh.name == no_institution else sh.name }}{{ share_bar(sh.share) }}</td><td class="num">{{ money(sh.value, 0) }}</td><td class="num">{{ percent(sh.share, 1) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% if report.effective_holdings %}<p class="small muted">{{ _("Herfindahl–Hirschman index {hhi}: as spread as {n} equal holdings.", hhi=money(report.hhi, 3), n=money(report.effective_holdings, 1)) }}</p>{% endif %}
+{% if report.deposits %}
+<article class="card flush mt">
+  <div class="card-head"><h2>{{ _("Deposit insurance") }}</h2><span class="sub">{{ _("{limit} TRY per person and bank", limit=money(report.limit, 0)) }} ({{ _("given") if given_limit else _("TMSF, {year}", year=report.limit_year) }})</span></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Owner") }}</th><th>{{ _("Bank") }}</th><th class="num">{{ _("Deposits") }}</th><th class="num">{{ _("Insured") }}</th><th class="num">{{ _("Over") }}</th></tr></thead>
+    <tbody>{% for d in report.deposits %}<tr><td>{{ _("Shared") if d.owner == "shared" else d.owner }}</td><td>{{ d.institution }}</td><td class="num">{{ money(d.value) }}</td><td class="num">{{ money([d.value, d.limit]|min) }}</td><td class="num">{% if d.over > 0 %}<span class="badge warning">{{ money(d.over) }}</span>{% else %}—{% endif %}</td></tr>{% endfor %}</tbody>
+  </table>
+  </div>
+  <p class="pager">{{ _("Deposits: checking, time deposit, foreign currency and gold accounts with a bank set. A joint account's insurance is shared by its holders; the ledger counts it for its owner.") }}</p>
+</article>
+{% if report.limit_year != at.year and not given_limit %}<p class="small">{{ _("The program knows the TMSF limit up to {year}; give this year's above.", year=report.limit_year) }}</p>{% endif %}
+{% endif %}
+{% if report.missing %}<p class="small muted mt">{{ _("Left out (no price): {items}", items=", ".join(report.missing)) }}</p>{% endif %}
+{% endblock %}

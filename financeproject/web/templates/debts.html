@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Debts") }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ _("Debts") }}</h1><p>{{ _("What is owed, what it costs, and what the installments left are worth after inflation.") }}</p></div>
+  <div class="actions"><a class="btn primary" href="/debts/loans/new">{{ _("Add a loan") }}</a></div>
+</header>
+{{ subtabs(tabs, tab, _("Debts")) }}
+<form class="filters compact" method="get" action="/debts">
+  <label class="field"><span>{{ _("On") }}</span><input type="date" name="date" value="{{ at.isoformat() }}"></label>
+  <label class="field"><span>{{ _("Expected inflation, % a year") }}</span><input type="text" inputmode="decimal" name="inflation" value="{{ form.inflation }}" placeholder="{{ _('CPI, last 12 months') }}"></label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+{% if report.lines %}
+<article class="card flush mb">
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Debt") }}</th><th class="num">{{ _("Owed") }}</th><th class="num wide-only">{{ _("Rate a month") }}</th><th class="num">{{ _("Cost a year") }}</th><th class="num wide-only">{{ _("Real a year") }}</th><th>{{ _("Next") }}</th><th class="num wide-only">{{ _("Left to pay") }}</th><th class="num wide-only">{{ _("In today's money") }}</th></tr></thead>
+    <tbody>
+    {% for line in report.lines %}{% set st = line.state %}
+      <tr>
+        {% if st %}
+        <td><a class="desc" href="/debts/loans/{{ st.loan.id }}">{{ st.loan.name }}</a><span class="sub">{{ line.account|short }}{% if st.last_due %} · {{ _("last {on}", on=st.last_due.isoformat()) }}{% endif %}</span></td>
+        <td class="num">{{ money(line.owed) }}{% if line.commodity != "TRY" %} {{ line.commodity }}{% endif %}</td>
+        <td class="num wide-only">{{ percent(st.loan.monthly_rate, 2) }}</td>
+        <td class="num">{{ percent(line.cost_rate, 1) }}</td>
+        <td class="num wide-only">{{ percent(line.real_rate, 1) }}</td>
+        <td class="nowrap">{% if st.next %}<span class="{{ 'badge warning' if st.next.due < at else '' }}">{{ st.next.due.isoformat() }}</span><span class="sub block">{{ money(st.next.payment) }}</span>{% else %}—{% endif %}</td>
+        <td class="num wide-only">{{ money(st.still_to_pay) }}{% if st.replanned %} *{% endif %}</td>
+        <td class="num wide-only">{{ money(line.today_value) if line.today_value is not none else "—" }}</td>
+        {% else %}
+        <td><a class="desc" href="/transactions?account={{ line.account|urlencode }}">{{ line.account|short }}</a><span class="sub">{{ _("no loan terms") }}</span></td>
+        <td class="num">{{ money(line.owed) }}{% if line.commodity != "TRY" %} {{ line.commodity }}{% endif %}</td>
+        <td class="num wide-only">—</td><td class="num">—</td><td class="num wide-only">—</td><td>—</td><td class="num wide-only">—</td><td class="num wide-only">—</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><td>{{ _("Total (TRY)") }}</td><td class="num">{{ money(report.owed) }}</td><td class="wide-only" colspan="1"></td><td></td><td class="wide-only"></td><td></td><td class="num wide-only">{{ money(report.still_to_pay) }}</td><td class="num wide-only">{{ money(report.today_value) if report.today_value is not none else "—" }}</td></tr></tfoot>
+  </table>
+  </div>
+</article>
+<div class="grid two">
+  <article class="card">
+    <h2>{{ _("Inflation") }}</h2>
+    {% if report.inflation %}
+    <p>{{ _("Expected inflation {rate} a year ({source}).", rate=percent(report.inflation.rate, 1), source=inflation_text) }}</p>
+    {% if report.today_value is not none and report.still_to_pay %}<p class="muted">{{ _("Inflation lightens the loans: {left} still to pay is worth {today} in today's money.", left=money(report.still_to_pay), today=money(report.today_value)) }}</p>{% endif %}
+    {% else %}<p class="muted">{{ _("No inflation figure: update the prices, or give one above.") }}</p>{% endif %}
+    {% for line in report.lines %}{% if line.later_installments %}<p class="small muted">{{ _("{account}: {later} of the {owed} owed are installments billed in later months.", account=line.account|short, later=money(line.later_installments), owed=money(line.owed)) }}</p>{% endif %}{% endfor %}
+  </article>
+  <article class="card">
+    <h2>{{ _("How to read it") }}</h2>
+    <p class="small muted">{{ _("Rate a month: contractual, without KKDF and BSMV. Cost a year: the annual cost rate of the terms. Real a year: interest and taxes compounded, after inflation.") }}</p>
+    <p class="small muted">{{ _("* The ledger's balance differs from the plan (an early repayment, or other terms): the installments left are worked out from the balance.") }}</p>
+  </article>
+</div>
+{% else %}
+<div class="card"><div class="empty"><h2>{{ _("No debts on {on}", on=at.isoformat()) }}</h2><p>{{ _("Loans, cards and money owed to people show up here once they have a balance.") }}</p><a class="btn primary" href="/debts/loans/new">{{ _("Add a loan") }}</a></div></div>
+{% endif %}
+{% endblock %}

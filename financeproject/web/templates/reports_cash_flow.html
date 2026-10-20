@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Cash flow") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("Where the money in the cash, checking and foreign currency accounts came from and went, month by month.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<form class="filters compact" method="get" action="/reports/cash-flow">
+  <label class="field"><span>{{ _("First month") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="start" value="{{ form.start }}"></label>
+  <label class="field"><span>{{ _("Last month") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="end" value="{{ form.end }}"></label>
+  <label class="field"><span>{{ _("Months") }}</span><input type="number" min="1" max="36" name="months" value="{{ form.months }}"></label>
+  <label class="check"><input type="checkbox" name="real" value="1" {% if real %}checked{% endif %}> {{ _("In real TRY") }}</label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+{% if flows %}
+<article class="card flush">
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th></th>{% for f in flows %}<th class="num">{{ f.month.strftime("%Y-%m") }}</th>{% endfor %}<th class="num">{{ _("Total") }}</th></tr></thead>
+    <tbody>
+      <tr class="total-row"><td>{{ _("Cash at the start") }}</td>{% for f in flows %}<td class="num">{{ money(f.beginning, 0) }}</td>{% endfor %}<td></td></tr>
+      {% for r in rows %}
+      <tr class="{{ 'total-row' if r.key == 'operating' else '' }}"><td>{% if r.key != "operating" %}<span class="indent"></span>{% endif %}{{ _(r.label) }}</td>{% for v in r["values"] %}<td class="num">{{ signed(v, 0) }}</td>{% endfor %}<td class="num">{{ signed(r.total, 0) }}</td></tr>
+      {% endfor %}
+      <tr><td><span class="indent"></span>{{ _("Revaluation of foreign currency") }}</td>{% for v in revaluation %}<td class="num">{{ signed(v, 0) }}</td>{% endfor %}<td class="num">{{ signed(revaluation_total, 0) }}</td></tr>
+    </tbody>
+    <tfoot><tr><td>{{ _("Cash at the end") }}</td>{% for f in flows %}<td class="num">{{ money(f.ending, 0) }}</td>{% endfor %}<td></td></tr></tfoot>
+  </table>
+  </div>
+</article>
+<p class="small muted mt">{{ _("Card purchases leave cash when the card is paid (Card payments), not when they are made. Foreign currency held as cash is revalued at each day's exchange rate.") }}{% if real and base_month %} {{ _("real TRY, in {month} prices", month=base_month.strftime("%Y-%m")) }}.{% endif %}</p>
+{% for item in unvalued %}<p class="small muted">{{ _("No price, left out: {item}", item=item) }}</p>{% endfor %}
+{% else %}
+<div class="card"><div class="empty"><p>{{ _("No months to show.") }}</p></div></div>
+{% endif %}
+{% endblock %}

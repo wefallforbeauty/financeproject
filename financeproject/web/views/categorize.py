@@ -13,6 +13,7 @@ from financeproject.ledger.models import Transaction
 from financeproject.web.app import flash, ledger_session, redirect, render
 from financeproject.web.forms import choices
 from financeproject.web.i18n import translator
+from financeproject.web.views.rules import TABS
 
 router = APIRouter()
 SHOWN = 200
@@ -40,6 +41,8 @@ def review_page(request: Request):
             confident=confident,
             options=options,
             pattern=suggested_pattern,
+            tabs=TABS,
+            tab="review",
         )
 
 

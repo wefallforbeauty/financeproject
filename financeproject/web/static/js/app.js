@@ -14,6 +14,12 @@
     return new Intl.NumberFormat(numberLocale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(value);
   }
 
+  /* 23.1% in English, %23,1 in Turkish (the number in the chosen number format) */
+  function pct(fraction, decimals) {
+    const text = number(fraction * 100, decimals);
+    return root.lang === "tr" ? "%" + text : text + "%";
+  }
+
   function compact(value) {
     return new Intl.NumberFormat(numberLocale, { notation: "compact", maximumFractionDigits: 1 }).format(value);
   }
@@ -36,6 +42,8 @@
     const value = (name) => style.getPropertyValue(name).trim();
     return {
       accent: value("--accent"),
+      series2: value("--series-2"),
+      series3: value("--series-3"),
       grid: value("--grid"),
       baseline: value("--baseline"),
       muted: value("--muted"),
@@ -137,6 +145,173 @@
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
   }
 
+  /* ---------------------------------------------------------- charts of the reports */
+
+  function chartData(element) {
+    const source = document.getElementById(element.dataset.source || "");
+    return source ? JSON.parse(source.textContent) : null;
+  }
+
+  function redrawOnThemeChange(draw, chart) {
+    draw();
+    window.addEventListener("resize", () => chart.resize());
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  }
+
+  /* Grouped bars, one series per entry of data.series (two at most here: income and expenses). */
+  function barsChart(element) {
+    const data = chartData(element);
+    if (!data || !data.categories.length) return;
+    const chart = window.echarts.init(element, null, { renderer: "svg" });
+    const last = data.categories.length - 1;
+
+    function draw() {
+      const t = tokens();
+      const colors = [t.accent, t.series2, t.series3];
+      chart.setOption(
+        {
+          animation: false,
+          color: colors,
+          grid: { left: 4, right: 8, top: 36, bottom: 4, containLabel: true },
+          legend: { top: 0, left: 0, itemWidth: 12, itemHeight: 12, icon: "roundRect", textStyle: { color: t.ink2 } },
+          tooltip: {
+            trigger: "item",
+            backgroundColor: t.surface,
+            borderColor: t.grid,
+            textStyle: { color: t.ink },
+            extraCssText: "box-shadow: none; border-radius: 8px;",
+            formatter(p) {
+              return (
+                '<div class="tt-value">' + escapeHtml(number(p.value, data.decimals) + " " + data.suffix) + "</div>" +
+                '<div class="tt-label">' + escapeHtml(p.seriesName + " · " + monthLabel(p.name + "-01")) + "</div>"
+              );
+            },
+          },
+          xAxis: {
+            type: "category",
+            data: data.categories,
+            axisLine: { lineStyle: { color: t.baseline } },
+            axisTick: { show: false },
+            axisLabel: { color: t.muted, formatter: (v) => monthLabel(v + "-01") },
+          },
+          yAxis: {
+            type: "value",
+            splitNumber: 4,
+            axisLabel: { color: t.muted, formatter: (v) => compact(v) },
+            splitLine: { lineStyle: { color: t.grid } },
+          },
+          series: data.series.map((s) => ({
+            type: "bar",
+            name: s.name,
+            barGap: "6%",
+            barCategoryGap: "38%",
+            itemStyle: { borderRadius: [4, 4, 0, 0], borderColor: t.surface, borderWidth: 1 },
+            emphasis: { disabled: true },
+            data: s.values.map((v, i) =>
+              i === last ? { value: v, label: { show: true, position: "top", color: t.ink2, formatter: (p) => compact(p.value) } } : v
+            ),
+          })),
+        },
+        true
+      );
+      element.setAttribute("aria-label", data.summary);
+    }
+
+    redrawOnThemeChange(draw, chart);
+  }
+
+  /* Income sources → budget → expense categories and savings. Colours follow the role, not the category. */
+  function sankeyChart(element) {
+    const data = chartData(element);
+    if (!data) return;
+    const chart = window.echarts.init(element, null, { renderer: "svg" });
+
+    function draw() {
+      const t = tokens();
+      const roles = { income: t.accent, expenses: t.series2, savings: t.series3 };
+      const narrow = element.clientWidth < 620;
+      const side = narrow ? 96 : 220;
+      const share = (n) => (n.share === null || n.share === undefined ? "" : " · " + pct(n.share, 0));
+      /* One line per label, so that small neighbouring nodes keep theirs; a narrow chart shows the names
+         only (the amounts are in the tooltip and the table). Labels that would still overlap are hidden. */
+      const node = (n, position) => ({
+        name: n.id,
+        value: n.value,
+        itemStyle: { color: roles[n.role] || t.baseline, borderColor: t.surface, borderWidth: 1 },
+        label: {
+          position,
+          color: t.ink,
+          width: side - 12,
+          overflow: "truncate",
+          formatter: () => (narrow ? n.label : n.label + "  {sub|" + compact(n.value) + share(n) + "}"),
+          rich: { sub: { color: t.ink2, fontSize: 11 } },
+        },
+        info: n,
+      });
+      const budget = data.budget;
+      const nodes = [
+        ...data.left.map((n) => node(n, "left")),
+        { name: budget.id, value: budget.value, itemStyle: { color: t.baseline }, label: { position: "top", color: t.ink2, formatter: () => budget.label }, info: budget },
+        ...data.right.map((n) => node(n, "right")),
+      ];
+      const links = [
+        ...data.left.map((n) => ({ source: n.id, target: budget.id, value: n.value, lineStyle: { color: roles[n.role], opacity: 0.32 } })),
+        ...data.right.map((n) => ({ source: budget.id, target: n.id, value: n.value, lineStyle: { color: roles[n.role], opacity: 0.32 } })),
+      ];
+      const info = Object.fromEntries([...data.left, budget, ...data.right].map((n) => [n.id, n]));
+      chart.setOption(
+        {
+          animation: false,
+          tooltip: {
+            trigger: "item",
+            backgroundColor: t.surface,
+            borderColor: t.grid,
+            textStyle: { color: t.ink },
+            extraCssText: "box-shadow: none; border-radius: 8px;",
+            formatter(p) {
+              const value = escapeHtml(number(p.value, 0) + " " + data.suffix);
+              if (p.dataType === "edge") {
+                const label = info[p.data.source].label + " → " + info[p.data.target].label;
+                return '<div class="tt-value">' + value + '</div><div class="tt-label">' + escapeHtml(label) + "</div>";
+              }
+              const n = info[p.name];
+              const extra = n.share === null || n.share === undefined ? "" : " · " + data.share_text.replace("{share}", pct(n.share, 1));
+              return '<div class="tt-value">' + value + '</div><div class="tt-label">' + escapeHtml(n.label + extra) + "</div>";
+            },
+          },
+          series: [
+            {
+              type: "sankey",
+              left: side,
+              right: side,
+              top: 24,
+              bottom: 8,
+              nodeAlign: "justify",
+              layoutIterations: 0,
+              nodeWidth: 12,
+              nodeGap: narrow ? 8 : 12,
+              draggable: false,
+              emphasis: { focus: "adjacency" },
+              labelLayout: { hideOverlap: true },
+              data: nodes,
+              links,
+            },
+          ],
+        },
+        true
+      );
+      element.setAttribute("aria-label", data.summary);
+    }
+
+    redrawOnThemeChange(draw, chart);
+  }
+
+  function reportCharts() {
+    if (typeof window.echarts === "undefined") return;
+    document.querySelectorAll('[data-chart="bars"]').forEach(barsChart);
+    document.querySelectorAll('[data-chart="sankey"]').forEach(sankeyChart);
+  }
+
   /* ---------------------------------------------------------- file drop zone */
 
   function dropzones() {
@@ -194,6 +369,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     networthChart();
+    reportCharts();
     dropzones();
   });
 })();
