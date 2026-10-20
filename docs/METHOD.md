@@ -1,4 +1,4 @@
-# Method (version 04b)
+# Method (version 04c)
 
 This document gives the definition, formula and source of everything the
 program computes. A section is added whenever a new model is.
@@ -823,15 +823,76 @@ catalog; one with a count has a singular and a plural form (Turkish uses one
 form after a number). A percentage keeps each language's order: 50% in
 English, %50 in Turkish.
 
+## 28. Phones and the wall monitor
+
+Opened to the home network, the interface runs a second server next to the
+first: in a thread of its own, on the same application, over HTTPS on this
+computer's private address (port 8766). The guard tells the two sides apart
+by the connection (HTTPS on that port) and checks each its own way.
+
+**Who is home.** Only clients with private addresses (RFC 1918, link-local)
+are served, and the `Host` header must name this computer's address or its
+names (`name`, `name.local`), against DNS rebinding as on the computer's side.
+Opening by itself at start happens only when the computer still has the
+address it was opened on, so a laptop on another network (a café's, which
+uses private addresses too) stays closed.
+
+**Pairing.** The computer makes a one-time code of ten letters from an
+alphabet of 31 without look-alike characters (0/O, 1/I/L), about 2^50
+possibilities, shown as a QR code of the pairing address. The code pairs one
+device within ten minutes and dies after five wrong tries; ten wrong tries in
+ten minutes stop pairing altogether. The device must also give the
+household's password, kept as an scrypt hash (Percival & Josefsson 2016) with
+N = 2^17, r = 8, p = 1, OWASP's minimum: one check takes about a quarter of a
+second and 128 MB, and runs in a worker thread so the server keeps answering.
+A paired device gets a random key of 256 bits in a cookie (`HttpOnly`,
+`Secure`, `SameSite=Lax` so that a home-screen icon carries it, 400 days, the
+longest browsers keep one); only the key's SHA-256 is stored, so the file
+does not let anyone in. Its changes need a CSRF token derived from its key,
+and an unpaired device's only change, pairing, must name this server's
+origin.
+
+**Certificates.** A certificate authority of the computer's own (EC P-256,
+ten years) signs the server's certificate (EC P-256, 397 days, within the
+398-day limit browsers set for server certificates). The authority is
+name-constrained (RFC 5280, 4.2.1.10): it can vouch only for private
+addresses, `.local` names and this computer's name, so a phone that installs
+it trusts nothing on the internet through it, even if its key were stolen.
+The server's certificate covers the computer's names and home addresses, and
+is made again when it nears its end or the addresses change; the authority
+stays, so a phone installs it once.
+
+**What a device sees.** A phone sees every page except this computer's own
+settings (the ledger, the demo, backups, the EVDS key, the desktop shortcut,
+the devices, stopping) and creating a ledger. A wall monitor is held to its
+own page. Removing a device ends its access at once; a page part that asks
+the server afterwards gets a refusal and the page loads again, so a removed
+monitor does not keep its numbers on the screen.
+
+**The monitor.** One page for a screen across the room: the time, net worth
+and its change, this month, net worth over twelve months (one series, so no
+legend; the last value is written at the line's end, as the screen has no
+pointer) and the payments of the next two weeks. It refreshes every two
+minutes and asks every five seconds whether guest mode changed. In **guest
+mode** no amount and no payee is shown: net worth as its change in percent,
+the chart in percent of its first month, the payments by their kind (income,
+a payment, card installments, a loan installment). A monitor may turn guest
+mode on, but only a phone or the computer may turn it off, so that a guest
+cannot. Where the browser allows it (the Screen Wake Lock API), the page keeps
+the screen on.
+
 ## References
 
 - Acerbi, C., & Tasche, D. (2002). On the coherence of expected shortfall. *Journal of Banking & Finance*, 26(7), 1487–1503.
 - Amar, M., Ariely, D., Ayal, S., Cryder, C. E., & Rick, S. I. (2011). Winning the battle but losing the war: The psychology of debt management. *Journal of Marketing Research*, 48(SPL), S38–S50.
+- Apple (2020). About upcoming limits on trusted certificates (398 days for TLS server certificates). https://support.apple.com/en-us/102028
 - Bacon, C. R. (2008). *Practical Portfolio Performance Measurement and Attribution* (2nd ed.). Wiley.
+- Bishop, M., Barth, A., & West, M. (eds.). Cookies: HTTP State Management Mechanism (RFC 6265bis; the 400-day limit on a cookie's lifetime). IETF HTTP Working Group draft.
 - Brown, A. L., & Lahey, J. N. (2015). Small victories: Creating intrinsic motivation in task completion and debt repayment. *Journal of Marketing Research*, 52(6), 768–783.
 - Campbell, J. Y. (2006). Household finance. *Journal of Finance*, 61(4), 1553–1604.
 - Christoffersen, P. F. (1998). Evaluating interval forecasts. *International Economic Review*, 39(4), 841–862.
 - Cleveland, W. S., & McGill, R. (1984). Graphical perception: Theory, experimentation, and application to the development of graphical methods. *Journal of the American Statistical Association*, 79(387), 531–554.
+- Cooper, D., Santesson, S., Farrell, S., Boeyen, S., Housley, R., & Polk, W. (2008). Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile. RFC 5280. IETF.
 - Dawid, A. P. (1984). Present position and potential developments: Some personal views. Statistical theory: The prequential approach. *Journal of the Royal Statistical Society, Series A*, 147(2), 278–292.
 - DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy? *Review of Financial Studies*, 22(5), 1915–1953.
 - DeVaney, S. A. (1994). The usefulness of financial ratios as predictors of household insolvency: Two perspectives. *Financial Counseling and Planning*, 5, 5–24.
@@ -857,7 +918,10 @@ English, %50 in Turkish.
 - Michaud, R. O. (1989). The Markowitz optimization enigma: Is "optimized" optimal? *Financial Analysts Journal*, 45(1), 31–42.
 - Microsoft. XIRR function (the worked example). https://support.microsoft.com/en-us/office/xirr-function-de1242ec-6477-445b-b11b-a303ad9adc9d
 - OWASP. Cross-Site Request Forgery Prevention Cheat Sheet. https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+- OWASP. Password Storage Cheat Sheet (scrypt parameters). https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+- Percival, C., & Josefsson, S. (2016). The scrypt Password-Based Key Derivation Function. RFC 7914. IETF.
 - Portfolio Performance. Time-weighted rate of return (TTWROR). https://help.portfolio-performance.info/en/concepts/performance/time-weighted
+- Rekhter, Y., Moskowitz, B., Karrenberg, D., de Groot, G. J., & Lear, E. (1996). Address Allocation for Private Internets. RFC 1918. IETF.
 - Schmidt, M. (2008). The Sankey diagram in energy and material flow management, Part I: History. *Journal of Industrial Ecology*, 12(1), 82–94.
 - Selinger, P. *Tutorial on multiple currency accounting*. https://www.mathstat.dal.ca/~selinger/accounting/tutorial.html
 - Tasarruf Mevduatı Sigorta Fonu (TMSF). Decisions of the Fund Board on the insured amount of deposits and participation funds, for 2025 and 2026 (Resmî Gazete, December 2024 and December 2025).
@@ -866,5 +930,6 @@ English, %50 in Turkish.
 - U.S. Department of the Treasury. 31 CFR Part 356, Appendix B (the reference CPI of inflation-indexed securities).
 - United Nations, European Commission, IMF, OECD, & World Bank (2009). *System of National Accounts 2008*, chapter 12: Other changes in assets (the revaluation account; nominal, neutral and real holding gains).
 - W3C. Content Security Policy Level 3. https://www.w3.org/TR/CSP3/
+- W3C. Screen Wake Lock API. https://www.w3.org/TR/screen-wake-lock/
 - WHATWG. Fetch Standard: append a request `Origin` header. https://fetch.spec.whatwg.org/#append-a-request-origin-header
 - Zadrozny, B., & Elkan, C. (2001). Obtaining calibrated probability estimates from decision trees and naive Bayesian classifiers. *Proceedings of the 18th International Conference on Machine Learning*, 609–616.

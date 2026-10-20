@@ -1,5 +1,71 @@
 # Update log
 
+## 04c (2026-10-20)
+
+Pull request #9. Version 04c opens the interface to the household's phones
+and a wall monitor on the home network, and fits it to a phone.
+
+### Phones and a wall monitor
+
+- **Opening to the home network** (Settings → Phones and monitor, or
+  `finance ui --lan`): a second server answers over HTTPS on this computer's
+  private address, port 8766, next to the one on 127.0.0.1. It serves clients
+  with private addresses only, checks the address they name, and stops with
+  the interface. "Open whenever the interface starts" opens it by itself only
+  on the network it was opened on.
+- **Pairing:** the computer shows a QR code with a one-time code (ten
+  minutes, five tries; ten wrong tries in ten minutes stop pairing); the device
+  gives the household's password (an scrypt hash; `finance ui --password`)
+  and a name. A paired device keeps a random key in a secure cookie; only its
+  hash is stored, in `devices.json`. Devices are listed with when and from
+  where they were last seen, and removed there or all at once with
+  `finance ui --forget-devices`.
+- **Certificates** (`web/tls.py`): a certificate authority of the computer's
+  own, name-constrained to private addresses and this computer's names, signs
+  the server's certificate, which is renewed by itself. Phones may install
+  the authority once (its fingerprint is shown on the computer) to stop the
+  browser's warning.
+- **What a device sees:** a phone sees every page but this computer's own
+  settings and creating a ledger; a wall monitor sees its own page only.
+- **The wall monitor** (`/monitor`): the time, net worth and its change, this
+  month, net worth over twelve months and the next two weeks' payments, on
+  one screen, refreshed every two minutes, keeping the screen on where the
+  browser allows it. **Guest mode** hides every amount and payee; a monitor
+  can turn it on, only a phone or the computer can turn it off, and the
+  monitor follows within seconds.
+- **On a phone:** the menu folds behind a button, a round button adds a
+  transaction, fields do not zoom in on iPhones, and "Add to home screen"
+  makes an icon (a web app manifest; a full-screen one for the monitor).
+- New dependencies: cryptography (certificates) and segno (QR codes).
+
+### In the interface
+
+- Messages after a change and the CSRF token are kept per device, so the
+  computer and each phone see their own.
+- The overview's figures come from one function that the monitor shares.
+- Times (when a device was paired or last seen, and others) are shown in
+  this computer's time zone.
+
+### Tests and documents
+
+- 312 tests (291 before): the password hash and the device store; pairing
+  codes, their expiry and the limits on wrong tries; the certificate chain,
+  its name constraints (a certificate for an internet address from the same
+  authority is refused) and its renewal; the guard on the home network (only
+  private addresses, only this server's names, the pairing page for unpaired
+  devices, origins, the computer's token not accepted there); pairing as a
+  person does it; what a phone and a monitor may open; guest mode; a real
+  HTTPS server on 127.0.0.1 with its certificate verified, TLS 1.2 or newer
+  with authenticated encryption; opening by itself only on the same network;
+  the new commands. Pairing a phone and a monitor was also done in Firefox
+  (headless, WebDriver BiDi) at a phone's and a tablet's size, which found
+  that HTMX leaves `<script>` elements out of a refreshed part of a page (the
+  monitor's chart lost its data) and that a removed monitor kept its numbers
+  on the screen.
+- README rewritten for 04c, with a new picture of a phone and one of the
+  wall monitor; `docs/METHOD.md` describes the home network's security and
+  the monitor.
+
 ## 04b (2026-10-20)
 
 Pull request #8. Version 04b brings the rest of the program into the
