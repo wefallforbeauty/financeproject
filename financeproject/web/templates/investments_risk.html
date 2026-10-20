@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Risk") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Investments") }}</h1><p>{{ _("Volatility, the largest fall, the value at risk with its backtest, and how the holdings move together.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Investments")) }}
+<form class="filters compact stack" method="get" action="/investments/risk">
+  <div class="filters compact">
+    <label class="field"><span>{{ _("First day") }}</span><input type="date" name="start" value="{{ form.start }}"></label>
+    <label class="field"><span>{{ _("Last day") }}</span><input type="date" name="end" value="{{ form.end }}"></label>
+    <label class="field"><span>{{ _("Days of history in the backtest") }}</span><input type="number" min="20" max="1000" name="window" value="{{ window }}"></label>
+    <button class="btn" type="submit">{{ _("Show") }}</button>
+  </div>
+  {% include "_portfolio.html" %}
+</form>
+{{ error_box(error) }}
+{% if report %}
+<p class="muted small">{{ report.start.isoformat() }} – {{ report.end.isoformat() }} · {{ _.n("{n} market day", "{n} market days", report.returns|length) }} · {{ _("value {value} TRY", value=money(report.value)) }}</p>
+{% if not enough %}
+<div class="card"><div class="empty"><p>{{ _.n("Only {n} market day: too few for risk figures.", "Only {n} market days: too few for risk figures.", report.returns|length) }}</p></div></div>
+{% else %}
+<section class="grid two">
+  <article class="card stat"><h2 class="label">{{ _("Volatility a year") }}</h2><p class="stat-value">{{ percent(report.volatility, 1) }}</p></article>
+  <article class="card stat"><h2 class="label">{{ _("Largest fall") }}</h2>
+    {% set dd = report.drawdown %}
+    {% if dd %}<p class="stat-value">{{ percent(-dd.depth, 1) }}</p>
+    <p class="delta">{{ _("from the peak of {peak} to {bottom}", peak=dd.peak.isoformat(), bottom=dd.bottom.isoformat()) }}; {{ _("back on {on}", on=dd.recovered.isoformat()) if dd.recovered else _("not back yet") }} ({{ _.n("{n} day", "{n} days", dd.days(report.end)) }})</p>
+    {% else %}<p class="stat-value">—</p><p class="delta">{{ _("The portfolio never fell below an earlier peak.") }}</p>{% endif %}
+  </article>
+</section>
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Value at risk, one day") }}</h2></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("At") }}</th><th class="num">VaR</th><th class="num">TRY</th><th class="num">{{ _("Expected shortfall") }}</th><th class="num">TRY</th><th class="num wide-only">{{ _("Normal VaR") }}</th><th class="num wide-only">{{ _("Normal shortfall") }}</th></tr></thead>
+    <tbody>
+    {% for h, n in var_rows %}
+      <tr><td>{{ percent(h.level) }}</td><td class="num">{{ percent(h.var, 2) }}</td><td class="num">{{ money(h.var * report.value) }}</td>
+        <td class="num">{{ percent(h.cvar, 2) }}</td><td class="num">{{ money(h.cvar * report.value) }}</td>
+        <td class="num wide-only">{{ percent(n.var, 2) }}</td><td class="num wide-only">{{ percent(n.cvar, 2) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="pager">{{ _("VaR: the loss of one day exceeded on 5% (1%) of days; expected shortfall: the mean loss on those days. Normal: the same from the returns' mean and spread.") }}</p>
+</article>
+{% if report.backtests %}
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Backtest") }}</h2><span class="sub">{{ _("each day's VaR from the {n} days before it, against that day's return", n=report.window) }}</span></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("At") }}</th><th class="num">{{ _("Days") }}</th><th class="num">{{ _("Exceptions") }}</th><th class="num">{{ _("Expected") }}</th><th class="num wide-only">Kupiec p</th><th class="num wide-only">{{ _("Independence p") }}</th><th>{{ _("Verdict") }}</th></tr></thead>
+    <tbody>
+    {% for b in report.backtests %}{% set v = verdict(b) %}
+      <tr><td>{{ percent(b.level) }}</td><td class="num">{{ b.days }}</td><td class="num">{{ b.exceptions }}</td><td class="num">{{ money(b.expected, 1) }}</td>
+        <td class="num wide-only">{{ money(b.kupiec_p, 3) }}</td><td class="num wide-only">{{ money(b.independence_p, 3) }}</td>
+        <td><span class="badge {{ 'good' if v == 'fits' else 'warning' }}">{{ _(v) }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</article>
+{% else %}<p class="small muted">{{ _("Backtest: needs more than {n} market days.", n=report.window) }}</p>{% endif %}
+{% if report.holdings %}
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Holdings") }}</h2></div>
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>{{ _("Holding") }}</th><th class="num">{{ _("Volatility a year") }}</th><th class="num">{{ _("Largest fall") }}</th><th class="num">{{ _("Correlation with the portfolio") }}</th></tr></thead>
+      <tbody>{% for h in report.holdings %}<tr><td>{{ h.commodity }}</td><td class="num">{{ percent(h.volatility, 1) }}</td><td class="num">{{ percent(-h.drawdown.depth, 1) if h.drawdown else "—" }}</td><td class="num">{{ money(h.correlation, 2) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+</article>
+{% if matrix %}
+<article class="card flush">
+  <div class="card-head"><h2>{{ _("Correlations") }}</h2></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th></th>{% for name, _row in matrix %}<th class="num">{{ name }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for name, row in matrix %}{% set i = loop.index0 %}<tr><th scope="row">{{ name }}</th>{% for c in row %}<td class="num{{ ' diagonal' if loop.index0 == i else '' }}">{{ money(c, 2) }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+  </div>
+</article>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

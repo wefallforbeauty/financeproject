@@ -158,6 +158,29 @@ def percent(value: Decimal | float | None, decimals: int = 0, sign: bool = False
     return ("+" + body) if sign and number > 0 else body
 
 
+def signed(value: Decimal | float | None, decimals: int = 2) -> str:
+    """An amount with its sign: ``+1,234`` or ``−56``."""
+    if value is None:
+        return "—"
+    return ("+" if value > 0 else "") + money(value, decimals)
+
+
+def price_info(book, code: str, at: date) -> dict | None:
+    """The price of ``code`` in TRY on ``at``: its value, unit, date and sources (``None`` if there is none)."""
+    from financeproject.reports.context import SOURCE_LABELS
+
+    found = book.resolve(code, at)
+    if found is None:
+        return None
+    return {
+        "value": found.value,
+        "decimals": 4 if code == "USD" else 2,
+        "unit": "TRY/g" if code == "XAU_G" else "TRY",
+        "as_of": found.as_of,
+        "sources": list(dict.fromkeys(SOURCE_LABELS.get(q.source, q.source) for q in found.path)),
+    }
+
+
 def short(path: str) -> str:
     """An account without its root: ``Expenses:Food:Groceries`` → ``Food:Groceries``."""
     return path.split(":", 1)[1] if ":" in path else path
@@ -220,6 +243,7 @@ def render(request: Request, template: str, status: int = 200, **context) -> HTM
         "demo": is_demo(request),
         "money": money,
         "percent": percent,
+        "signed": signed,
         "short": short,
         "route": route,
         "row_amount": row_amount,
@@ -252,8 +276,12 @@ def create_app(
         accounts,
         categorize,
         dashboard,
+        debts,
         history,
         imports,
+        investments,
+        reports,
+        rules,
         settings,
         transactions,
         welcome,
@@ -315,6 +343,6 @@ def create_app(
         message = _("The ledger is busy: a task in the background is writing to it. Try again in a moment.")
         return render(request, "error.html", 503, title=_("That did not work"), message=message)
 
-    for module in (dashboard, transactions, imports, categorize, accounts, settings, history, welcome):
+    for module in (dashboard, transactions, imports, categorize, rules, accounts, reports, debts, investments, settings, history, welcome):
         app.include_router(module.router)
     return app

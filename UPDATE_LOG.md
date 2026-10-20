@@ -1,5 +1,82 @@
 # Update log
 
+## 04b (2026-10-20)
+
+Pull request #8. Version 04b brings the rest of the program into the
+interface: the reports, debts and loans, investments and the categorization
+rules are pages now, in English and Turkish, light and dark.
+
+### The interface
+
+- **Reports** (`/reports`): the balance sheet on any day in four units, with
+  liquidity and each owner's share; the income statement by category and
+  month with a chart of income and expenses (also in real TRY, at any depth);
+  the cash flow statement; where the money went, as a Sankey diagram of a
+  month or a period with a table under it; the change in net worth in four
+  units; the household ratios with their benchmarks and the figures they come
+  from; recurring payments and what falls due in the next 60 days.
+- **Debts** (`/debts`): every debt with its monthly rate, annual cost rate,
+  real rate and what is left to pay in today's money. A loan is added from its
+  papers, with the rate or the installment (the rate is then worked out), as a
+  new loan paid into an account, a loan taken before the ledger, or one whose
+  balance is in the ledger already; its page shows the payment plan, records
+  payments (early repayments too) and deletes its terms after a backup. Card
+  installments by month and each card's balance split; paying several debts
+  off by avalanche or snowball; the annual cost rate of a credit offer; cash
+  or installments.
+- **Investments** (`/investments`): returns of the portfolio and of each
+  account, time- and money-weighted, in four units; risk with the value at
+  risk, its backtests and a table of correlations; concentration by holding,
+  bank and currency, and deposits against the TMSF limit. Any choice of
+  accounts.
+- **Rules** (`/rules`, next to the category review): the rules in the order
+  they are tried; adding (text or regular expression, priority), deleting,
+  applying them to the transactions without a category.
+- **Charts:** the income statement's bars and the Sankey diagram are drawn in
+  the browser (ECharts) with the palette's first three colours, checked for
+  colour-vision deficiencies in both themes, with direct labels, a tooltip, a
+  table view and a text alternative. In the interface the Sankey groups the
+  categories under 2% of the budget as Other, so that no labels overlap.
+- **Turkish:** about 440 new texts; numbers in the ratios, the backtest and the
+  correlations follow the number format setting, and percentages keep each
+  language's order.
+
+### In the library, for the interface
+
+- `define_loan` (`ledger/loans.py`) defines a loan for `finance loan add` and
+  the interface alike: the account made when needed, the taxes of its kind,
+  the rate worked out from an installment.
+- The household ratios carry a key and their details (the reason an inflation
+  figure is missing, for example), so the interface can word them in its
+  language. `Inflation` remembers the CPI's last month.
+- The names of the price sources moved to `reports/context.py`, shared by the
+  command line and the interface; the Sankey's `build` takes a smallest share.
+
+### Fixes
+
+- A line meant for narrow screens (the account and category under a
+  transaction's description) also showed on wide ones when the transaction
+  had no separate payee.
+- Wide tables had a light scroll bar in the dark theme.
+- The README's examples and `examples/transactions_standard.csv` use generic
+  shop and card names instead of real brands.
+
+### Tests and documents
+
+- 291 tests (279 before): every new page in both languages with templates
+  that fail on any missing name, on the demo household and on a small ledger;
+  adding, paying and deleting a loan, from its rate or its installment, and
+  its form's mistakes; paying off and the calculators (a bank's published
+  annual cost rate of 13.75%); card installments; rules from the interface;
+  investments with and without investment accounts; the warnings in Turkish;
+  folding small categories; the correlation table. The pages were also
+  clicked through in Firefox (headless, WebDriver BiDi) in both languages and
+  themes and at a phone's width, which found overlapping Sankey labels,
+  tables cut off at the right, a subtitle shown twice and an untranslated
+  inflation source.
+- README rewritten for 04b, with two new pictures of the interface;
+  `docs/METHOD.md` describes the interface's charts.
+
 ## 04a (2026-10-18)
 
 Pull requests #6 and #7. Version 04a is the web interface: `finance ui` opens

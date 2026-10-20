@@ -34,7 +34,7 @@ from financeproject.reports.context import load_market_data
 from financeproject.reports.income import IncomeStatement, income_statement, truncate
 from financeproject.reports.ratios import BELOW, DANGER, OK, household_ratios
 from financeproject.reports.recurring import recurring, upcoming
-from financeproject.reports.sankey import build, save_sankey
+from financeproject.reports.sankey import build, fold_small, save_sankey
 
 
 @pytest.fixture
@@ -146,6 +146,23 @@ def test_sankey_nodes_and_drawing(tmp_path):
     assert path.stat().st_size > 20_000
     empty = save_sankey(build({}, {}), tmp_path / "e.png", "Empty")
     assert empty.exists()
+
+
+def test_small_items_fold_into_other():
+    values = {"A": Decimal(500), "B": Decimal(300), "C": Decimal(150), "D": Decimal(30), "E": Decimal(20)}
+    assert [k for k, _ in fold_small(values, 9, "Other", Decimal(40))] == ["A", "B", "C", "Other"]
+    assert dict(fold_small(values, 9, "Other", Decimal(40)))["Other"] == 50
+    # one small item alone stays; the three largest always stay
+    assert len(fold_small(values, 9, "Other", Decimal(25))) == 5
+    assert [k for k, _ in fold_small(values, 9, "Other", Decimal(1000))] == ["A", "B", "C", "Other"]
+    # a category already called "Other" is merged, not repeated
+    folded = fold_small({**values, "Other": Decimal(10)}, 9, "Other", Decimal(40))
+    assert [k for k, _ in folded] == ["A", "B", "C", "Other"] and folded[-1][1] == 60
+    # the web's Sankey folds what is under 2% of the budget
+    data = build({"Income:Salary": Decimal(10000)}, {"Expenses:Rent": Decimal(3000), "Expenses:Food": Decimal(1000),
+                 "Expenses:Bills": Decimal(500), "Expenses:Tea": Decimal(100), "Expenses:Gum": Decimal(50)},
+                 min_share=Decimal("0.02"))
+    assert [n.label for n in data.right] == ["Rent", "Food", "Bills", "Other", "Saved"] and data.grouped
 
 
 def dates_every(start, days, n, jitter=()):

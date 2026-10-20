@@ -35,18 +35,24 @@ from sqlalchemy.orm import Session, selectinload
 
 from financeproject.core.kinds import EXPENSE, LIABILITY
 from financeproject.core.loans import (
+    ANNUITY,
     CENT,
     METHODS,
     Installment,
     LoanTerms,
     annual_cost_rate,
     balance_after,
+    implied_monthly_rate,
     same_day_months_later,
     schedule,
     split_interest,
 )
-from financeproject.errors import AccountError, LedgerError
-from financeproject.ledger.accounts import find_account, get_or_create_account
+from financeproject.errors import AccountError, AccountNotFound, LedgerError
+from financeproject.ledger.accounts import (
+    create_account,
+    find_account,
+    get_or_create_account,
+)
 from financeproject.ledger.models import (
     Account,
     Loan,
@@ -231,6 +237,62 @@ def add_loan(
     session.add(loan)
     session.flush()
     return loan
+
+
+def define_loan(
+    session: Session,
+    name: str,
+    account: str,
+    *,
+    principal: Decimal,
+    count: int,
+    first_due: date,
+    monthly_rate: Decimal | None = None,
+    installment: Decimal | None = None,
+    method: str = ANNUITY,
+    kkdf: Decimal | None = None,
+    bsmv: Decimal | None = None,
+    kind: str = "consumer_loan",
+    **terms,
+) -> tuple[Loan, Account | None, bool]:
+    """A loan as its papers give it: the contractual monthly rate, or the installment.
+
+    With ``installment`` the rate is worked out from it (equal installments
+    only). An ``account`` that does not exist is created as a TRY liability of
+    ``kind`` if it is a full path under ``Liabilities:``. ``terms`` go on to
+    ``add_loan``. Returns the loan, the account created (or ``None``) and
+    whether the rate was worked out.
+    """
+    if (monthly_rate is None) == (installment is None):
+        raise LedgerError("Give either the monthly interest rate or the installment.")
+    if count < 1:
+        raise LedgerError("A loan needs at least one installment.")
+    if kind not in LOAN_KINDS:
+        raise LedgerError(f"Unknown kind of loan {kind!r}; use one of: {', '.join(LOAN_KINDS)}.")
+    created = None
+    try:
+        acc = find_account(session, account)
+    except AccountNotFound:
+        if not account.strip().casefold().startswith("liabilities:"):
+            raise LedgerError(
+                f"No account matches {account!r}. To create one give its full path, e.g. 'Liabilities:Loans:{name}'."
+            ) from None
+        acc = created = create_account(session, account, kind=kind, commodity="TRY")
+    default_kkdf, default_bsmv = DEFAULT_TAXES.get(acc.kind, (Decimal(0), Decimal(0)))
+    kkdf = default_kkdf if kkdf is None else kkdf
+    bsmv = default_bsmv if bsmv is None else bsmv
+    if monthly_rate is None:
+        if method != ANNUITY:
+            raise LedgerError("The rate can be worked out from the installment for equal installments only; give the rate.")
+        try:
+            monthly_rate = implied_monthly_rate(principal, installment, count, 1 + kkdf + bsmv)
+        except ValueError as exc:
+            raise LedgerError(str(exc)) from exc
+    loan = add_loan(
+        session, name, acc, principal=principal, monthly_rate=monthly_rate, count=count, first_due=first_due,
+        method=method, kkdf=kkdf, bsmv=bsmv, **terms,
+    )
+    return loan, created, installment is not None
 
 
 def delete_loan(session: Session, loan: Loan) -> None:

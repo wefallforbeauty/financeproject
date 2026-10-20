@@ -1,0 +1,6 @@
+<details class="more" {% if chosen %}open{% endif %}>
+  <summary>{{ _("Accounts of the portfolio") }}{% if chosen %} ({{ chosen|length }}){% else %}: {{ _("every fund, stock, gold and foreign currency account") }}{% endif %}</summary>
+  <div class="checks">
+    {% for a in assets %}<label class="check"><input type="checkbox" name="account" value="{{ a.path }}" {% if a.path in chosen %}checked{% endif %}> {{ a.path|short }}{% if a.kind in default_kinds %} <span class="badge">{{ _("default") }}</span>{% endif %}</label>{% endfor %}
+  </div>
+</details>

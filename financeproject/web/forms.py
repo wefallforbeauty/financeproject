@@ -10,7 +10,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from financeproject.core.dates import parse_date
+from financeproject.core.dates import add_months, month_start, parse_date, parse_month
 from financeproject.core.kinds import ASSET, EXPENSE, INCOME, KINDS, LIABILITY
 from financeproject.core.money import (
     get_number_format,
@@ -53,6 +53,35 @@ def amount_value(text: str | None, field: str = "amount", positive: bool = True)
     if positive and value <= 0:
         raise FinanceError(f"The {field} must be more than zero.")
     return value
+
+
+def month_value(text: str | None, field: str = "month") -> date:
+    """The first day of a month from a form (``2026-10`` from a month input)."""
+    try:
+        return parse_month((text or "").strip())
+    except (FinanceError, ValueError) as exc:
+        raise FinanceError(f"Cannot read the {field} {text!r}.") from exc
+
+
+def month_range(start: str | None, end: str | None, months: int, today: date) -> tuple[date, date]:
+    """The first and last month of a report: ``end`` (default this month) and ``months`` back, or ``start``."""
+    last = month_value(end, "last month") if optional(end) else month_start(today)
+    first = month_value(start, "first month") if optional(start) else add_months(last, -(months - 1))
+    if first > last:
+        raise FinanceError("The first month is after the last one.")
+    return first, last
+
+
+def bounded(value: int | None, default: int, low: int, high: int) -> int:
+    return default if value is None else max(low, min(high, value))
+
+
+def percent_value(text: str | None, field: str) -> Decimal:
+    """A rate typed in per cent (``3.49`` or ``3,49``) as a fraction (``0.0349``)."""
+    value = amount_value(text, field, positive=False)
+    if value < 0:
+        raise FinanceError(f"The {field} cannot be negative.")
+    return value / 100
 
 
 def optional(text: str | None) -> str | None:

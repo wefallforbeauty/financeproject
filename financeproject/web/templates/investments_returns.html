@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Returns") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Investments") }}</h1><p>{{ _("Returns time-weighted and money-weighted, in TRY, real TRY, US dollars and grams of gold.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Investments")) }}
+<form class="filters compact stack" method="get" action="/investments">
+  <div class="filters compact">
+    <label class="field"><span>{{ _("First day") }}</span><input type="date" name="start" value="{{ form.start }}"></label>
+    <label class="field"><span>{{ _("Last day") }}</span><input type="date" name="end" value="{{ form.end }}"></label>
+    <button class="btn" type="submit">{{ _("Show") }}</button>
+  </div>
+  {% include "_portfolio.html" %}
+</form>
+{{ error_box(error) }}
+{% if report %}
+<p class="muted small">{{ report.start.isoformat() }} – {{ report.end.isoformat() }} · {{ _.n("{n} day", "{n} days", report.days) }} · {{ report.accounts|map("short")|join(", ") }}</p>
+<article class="card flush mb">
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Unit") }}</th><th class="num wide-only">{{ _("Start") }}</th><th class="num wide-only">{{ _("Money in") }}</th><th class="num wide-only">{{ _("Money out") }}</th><th class="num">{{ _("End") }}</th><th class="num">{{ _("Gain") }}</th><th class="num">{{ _("Time-weighted") }}</th><th class="num wide-only">{{ _("a year") }}</th><th class="num">{{ _("Money-weighted a year") }}</th></tr></thead>
+    <tbody>
+    {% for r in report.units %}{% set d = 3 if r.name.startswith("gold") else 2 %}
+      <tr><td>{{ _(unit_labels.get(r.name, r.name)) }}{% if r.name == "real TRY" and report.base_month %} <span class="sub">({{ report.base_month.strftime("%Y-%m") }})</span>{% endif %}</td>
+        <td class="num wide-only">{{ money(r.start_value, d) }}</td><td class="num wide-only">{{ money(r.inflows, d) }}</td><td class="num wide-only">{{ money(r.outflows, d) }}</td>
+        <td class="num">{{ money(r.end_value, d) }}</td><td class="num {{ 'in' if r.gain > 0 else '' }}">{{ signed(r.gain, d) }}</td>
+        <td class="num">{{ percent(r.twr, 2, sign=True) }}</td><td class="num wide-only">{{ percent(r.twr_year, 2, sign=True) }}</td><td class="num">{{ percent(r.money_weighted, 2, sign=True) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</article>
+{% if report.by_account %}
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("By account (TRY)") }}</h2></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Account") }}</th><th class="num wide-only">{{ _("Start") }}</th><th class="num wide-only">{{ _("Money in") }}</th><th class="num wide-only">{{ _("Money out") }}</th><th class="num">{{ _("End") }}</th><th class="num">{{ _("Gain") }}</th><th class="num">{{ _("Time-weighted") }}</th><th class="num wide-only">{{ _("a year") }}</th><th class="num">{{ _("Money-weighted a year") }}</th></tr></thead>
+    <tbody>
+    {% for r in report.by_account %}
+      <tr><td>{{ r.name|short }}</td><td class="num wide-only">{{ money(r.start_value) }}</td><td class="num wide-only">{{ money(r.inflows) }}</td><td class="num wide-only">{{ money(r.outflows) }}</td>
+        <td class="num">{{ money(r.end_value) }}</td><td class="num {{ 'in' if r.gain > 0 else '' }}">{{ signed(r.gain) }}</td>
+        <td class="num">{{ percent(r.twr, 2, sign=True) }}</td><td class="num wide-only">{{ percent(r.twr_year, 2, sign=True) }}</td><td class="num">{{ percent(r.money_weighted, 2, sign=True) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</article>
+{% endif %}
+<div class="grid two">
+  <article class="card">
+    <h2>{{ _("How to read it") }}</h2>
+    <p class="small muted">{{ _("Time-weighted: what the investments earned, whatever was added or taken out (Portfolio Performance's TTWROR). Money-weighted: the yearly rate earned on the money put in (XIRR).") }}</p>
+    {% if report.days < 365 %}<p class="small muted">{{ _("'a year' extends a period shorter than a year; read it with care.") }}</p>{% endif %}
+  </article>
+  <article class="card">
+    <h2>{{ _("Notes") }}</h2>
+    {% if missing %}<p class="small">{{ _("Not shown: {units} (no price for every day; update the prices).", units=", ".join(missing)) }}</p>{% endif %}
+    {% if report.cpi_extrapolated %}<p class="small muted">{{ _("Real TRY: the CPI after its last published month is not known yet; prices are held at that month's level.") }}</p>{% endif %}
+    {% if not missing and not report.cpi_extrapolated %}<p class="small muted">{{ _("Every unit has a price for every day.") }}</p>{% endif %}
+  </article>
+</div>
+{% endif %}
+{% endblock %}

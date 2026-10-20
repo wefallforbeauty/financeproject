@@ -9,7 +9,21 @@ from sqlalchemy.orm import Session
 
 from financeproject.core.inflation import Deflator
 from financeproject.core.prices import PriceBook
-from financeproject.prices.store import index_sources, load_index, load_pricebook
+from financeproject.prices.store import (
+    MANUAL,
+    index_sources,
+    load_index,
+    load_pricebook,
+)
+
+SOURCE_LABELS = {
+    "tcmb": "TCMB forex buying",
+    "evds": "EVDS forex buying",
+    "frankfurter": "Frankfurter XAU/USD",
+    MANUAL: "entered by hand",
+    "synthetic": "made up (demo)",
+}
+"""How the price sources are named in reports."""
 
 
 @dataclass(frozen=True)

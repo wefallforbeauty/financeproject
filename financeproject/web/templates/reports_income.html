@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Income statement") }}{% endblock %}
+{% block scripts %}<script src="/static/vendor/echarts.min.js?v=6.1.0" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("Income and expenses by category and month, net saving and the savings rate.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<form class="filters compact" method="get" action="/reports/income">
+  <label class="field"><span>{{ _("First month") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="start" value="{{ form.start }}"></label>
+  <label class="field"><span>{{ _("Last month") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="end" value="{{ form.end }}"></label>
+  <label class="field"><span>{{ _("Months") }}</span><input type="number" min="1" max="36" name="months" value="{{ form.months }}"></label>
+  <label class="field"><span>{{ _("Detail") }}</span>
+    <select name="depth">{% for d, label in [(1, _("Main groups")), (2, _("Categories")), (3, _("Subcategories"))] %}<option value="{{ d }}" {% if depth == d %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  </label>
+  <label class="check"><input type="checkbox" name="real" value="1" {% if real %}checked{% endif %}> {{ _("In real TRY") }}</label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+<p class="muted small">{{ st.start.isoformat() }} – {{ st.end.isoformat() }} · {% if real and base_month %}{{ _("real TRY, in {month} prices", month=base_month.strftime("%Y-%m")) }}{% else %}TRY{% endif %}{% if partial %} · {{ _("* this month so far") }}{% endif %}</p>
+
+{% if count %}
+<article class="card mb">
+  <div class="card-head"><h2>{{ _("Income and expenses") }}</h2></div>
+  <div class="chart" data-chart="bars" data-source="income-data" role="img" aria-label="{{ chart.summary }}"></div>
+  <script type="application/json" id="income-data">{{ chart|tojson }}</script>
+</article>
+{% endif %}
+
+<article class="card flush">
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th></th>{% for m in months %}<th class="num">{{ m.strftime("%Y-%m") }}{% if partial and loop.last %}*{% endif %}</th>{% endfor %}<th class="num">{{ _("Total") }}</th><th class="num">{{ _("Per month") }}</th></tr></thead>
+    <tbody>
+      <tr class="section-row"><th colspan="{{ count + 3 }}">{{ _("Income") }}</th></tr>
+      {% for r in income %}<tr><td>{{ r.label }}</td>{% for v in r.cells %}<td class="num">{{ money(v, 0) if v else "" }}</td>{% endfor %}<td class="num">{{ money(r.total, 0) }}</td><td class="num">{{ money(r.total / count, 0) }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>{{ _("Total income") }}</td>{% for v in income_totals %}<td class="num">{{ money(v, 0) }}</td>{% endfor %}<td class="num">{{ money(st.total_income(), 0) }}</td><td class="num">{{ money(st.total_income() / count, 0) if count else "" }}</td></tr>
+      <tr class="section-row"><th colspan="{{ count + 3 }}">{{ _("Expenses") }}</th></tr>
+      {% for r in expenses %}<tr><td>{{ r.label }}</td>{% for v in r.cells %}<td class="num">{{ money(v, 0) if v else "" }}</td>{% endfor %}<td class="num">{{ money(r.total, 0) }}</td><td class="num">{{ money(r.total / count, 0) }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>{{ _("Total expenses") }}</td>{% for v in expense_totals %}<td class="num">{{ money(v, 0) }}</td>{% endfor %}<td class="num">{{ money(st.total_expenses(), 0) }}</td><td class="num">{{ money(st.total_expenses() / count, 0) if count else "" }}</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td>{{ _("Net saving") }}</td>{% for v in net %}<td class="num">{{ signed(v, 0) }}</td>{% endfor %}<td class="num">{{ signed(st.net(), 0) }}</td><td class="num">{{ signed(st.net() / count, 0) if count else "" }}</td></tr>
+      <tr><td>{{ _("Savings rate") }}</td>{% for r in rates %}<td class="num">{{ percent(r) }}</td>{% endfor %}<td class="num">{{ percent(st.savings_rate()) }}</td><td></td></tr>
+    </tfoot>
+  </table>
+  </div>
+</article>
+{% for item in st.unvalued[:10] %}<p class="small muted">{{ _("No price, left out: {item}", item=item) }}</p>{% endfor %}
+{% endblock %}

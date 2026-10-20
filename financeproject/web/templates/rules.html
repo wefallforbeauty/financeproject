@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Rules") }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>{{ _("Categorize") }}</h1><p>{{ _("A rule sends every transaction whose description has its text to a category. Rules are tried first, before the learned model, highest priority first.") }}</p></div>
+</header>
+{{ subtabs(tabs, tab, _("Categorize")) }}
+{{ error_box(error) }}
+<div class="grid side">
+  <article class="card flush">
+    {% if rules %}
+    <div class="card-head"><h2>{{ _("Rules") }}</h2>
+      <form method="post" action="/rules/apply"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn small" type="submit">{{ _("Apply the rules now") }}</button></form>
+    </div>
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th class="num">#</th><th>{{ _("Text") }}</th><th>{{ _("Category") }}</th><th class="num">{{ _("Priority") }}</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rules %}
+        <tr><td class="num sub">{{ r.id }}</td><td><code>{{ r.pattern }}</code>{% if r.is_regex %} <span class="badge">{{ _("regular expression") }}</span>{% endif %}</td>
+          <td>{{ r.account.path|short }}</td><td class="num">{{ r.priority }}</td>
+          <td><form method="post" action="/rules/{{ r.id }}/delete" data-confirm="{{ _('Delete rule #{n}?', n=r.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn small danger" type="submit">{{ _("Delete") }}</button></form></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty"><h2>{{ _("No rules yet") }}</h2><p>{{ _("Add one here, or make one from a line in the review.") }}</p></div>
+    {% endif %}
+  </article>
+  <article class="card">
+    <h2>{{ _("Add a rule") }}</h2>
+    <form class="form" method="post" action="/rules">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="field"><span>{{ _("When the description has") }}</span><input type="text" name="pattern" value="{{ form.get('pattern', '') }}" required><span class="hint">{{ _("Case and Turkish letters do not matter.") }}</span></label>
+      <label class="field"><span>{{ _("put it into") }}</span>
+        <select name="account" required>
+          <optgroup label="{{ _('Expenses') }}">{% for o in options.expense %}<option value="{{ o.value }}" {% if form.get('account') == o.value %}selected{% endif %}>{{ o.label }}</option>{% endfor %}</optgroup>
+          <optgroup label="{{ _('Income') }}">{% for o in options.income %}<option value="{{ o.value }}" {% if form.get('account') == o.value %}selected{% endif %}>{{ o.label }}</option>{% endfor %}</optgroup>
+          <optgroup label="{{ _('Accounts') }}">{% for o in options.money %}<option value="{{ o.value }}" {% if form.get('account') == o.value %}selected{% endif %}>{{ o.label }}</option>{% endfor %}</optgroup>
+        </select><span class="hint">{{ _("An account makes it a transfer (paying a card from the bank, for example).") }}</span></label>
+      <div class="row">
+        <label class="field"><span>{{ _("Priority") }}</span><input type="number" name="priority" value="{{ form.get('priority', '0') }}"><span class="hint">{{ _("Higher is tried first.") }}</span></label>
+      </div>
+      <label class="check"><input type="checkbox" name="regex" value="1" {% if form.get('regex') == '1' %}checked{% endif %}> {{ _("The text is a regular expression") }}</label>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Add the rule") }}</button></div>
+    </form>
+  </article>
+</div>
+{% endblock %}

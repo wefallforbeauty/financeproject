@@ -36,13 +36,21 @@ class Node:
     color: str
 
 
-def fold_small(values: dict[str, Decimal], top: int, other: str) -> list[tuple[str, Decimal]]:
-    """The ``top - 1`` largest items and the rest summed as ``other`` (or all, if they fit)."""
+def fold_small(
+    values: dict[str, Decimal], top: int, other: str, floor: Decimal = Decimal(0)
+) -> list[tuple[str, Decimal]]:
+    """The largest items and the rest summed as ``other``: at most ``top`` items in all, and the items
+    below ``floor`` folded too (the three largest always stay). Nothing is folded alone."""
     items = sorted(((k, v) for k, v in values.items() if v > 0), key=lambda kv: (-kv[1], kv[0]))
-    if len(items) <= top:
+    keep = len(items) if len(items) <= top else top - 1
+    small = sum(1 for _, v in items if v < floor)
+    if small:
+        keep = min(keep, max(len(items) - small, 3))
+    if len(items) - keep < 2:
         return items
-    head, tail = items[: top - 1], items[top - 1 :]
-    return head + [(other, sum((v for _, v in tail), Decimal(0)))]
+    head, tail = items[:keep], items[keep:]
+    rest = sum((v for _, v in tail), Decimal(0)) + sum((v for k, v in head if k == other), Decimal(0))
+    return [(k, v) for k, v in head if k != other] + [(other, rest)]
 
 
 def short(path: str) -> str:
@@ -73,13 +81,19 @@ class SankeyData:
 
 
 def build(
-    income: dict[str, Decimal], expenses: dict[str, Decimal], top_income: int = 5, top_expenses: int = 9
+    income: dict[str, Decimal],
+    expenses: dict[str, Decimal],
+    top_income: int = 5,
+    top_expenses: int = 9,
+    min_share: Decimal = Decimal(0),
 ) -> SankeyData:
-    """Nodes from income and expense totals (positive amounts, keyed by account path)."""
+    """Nodes from income and expense totals (positive amounts, keyed by account path). Items smaller than
+    ``min_share`` of the budget go into "Other" too."""
     total_in = sum((v for v in income.values() if v > 0), Decimal(0))
     total_out = sum((v for v in expenses.values() if v > 0), Decimal(0))
-    left = [Node(short(k), v, INCOME_COLOR) for k, v in fold_small(income, top_income, "Income:Other")]
-    right = [Node(short(k), v, EXPENSE_COLOR) for k, v in fold_small(expenses, top_expenses, "Expenses:Other")]
+    floor = max(total_in, total_out) * min_share
+    left = [Node(short(k), v, INCOME_COLOR) for k, v in fold_small(income, top_income, "Income:Other", floor)]
+    right = [Node(short(k), v, EXPENSE_COLOR) for k, v in fold_small(expenses, top_expenses, "Expenses:Other", floor)]
     if total_in > total_out:
         right.append(Node("Saved", total_in - total_out, SAVINGS_COLOR))
     elif total_out > total_in:

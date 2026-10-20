@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Ratios") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("Household financial ratios against the benchmarks of Greninger et al. (1996).") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<form class="filters compact" method="get" action="/reports/ratios">
+  <label class="field"><span>{{ _("On") }}</span><input type="date" name="date" value="{{ at.isoformat() }}"></label>
+  <label class="field"><span>{{ _("Months of income and expenses") }}</span><input type="number" min="1" max="36" name="months" value="{{ months }}"></label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+<p class="muted small">{{ _("Flows {start} – {end} ({n} months); balances on {end}", start=first.isoformat(), end=report.end.isoformat(), n=months) }}</p>
+<article class="card flush mb">
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Ratio") }}</th><th class="num">{{ _("Value") }}</th><th>{{ _("Benchmark") }}</th><th>{{ _("Status") }}</th><th class="wide-only">{{ _("What it is") }}</th></tr></thead>
+    <tbody>
+    {% for r in ratios %}
+      <tr>
+        <td><span class="desc">{{ r.name }}</span><span class="sub narrow-only">{{ r.note }}</span></td>
+        <td class="num">{{ r.value }}</td>
+        <td class="sub">{{ r.benchmark }}</td>
+        <td>{% if r.status %}<span class="badge {{ r.tone }}">{{ "✓" if r.tone == "good" else "▲" if r.tone == "critical" else "•" }} {{ r.status }}</span>{% endif %}</td>
+        <td class="sub wide-only">{{ r.note }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</article>
+<div class="grid side">
+  <article class="card flush">
+    <div class="card-head"><h2>{{ _("What they are worked out from") }}</h2></div>
+    <div class="table-wrap">
+    <table class="data">
+      <tbody>{% for label, value in inputs %}<tr><td>{{ _(label) }}</td><td class="num">{{ money(value) }} TRY</td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+  </article>
+  <article class="card">
+    <h2>{{ _("How to read them") }}</h2>
+    <p class="small muted">{{ _("The benchmarks come from a Delphi study among US financial planners and educators in the 1990s. They are signals for a closer look, not advice.") }}</p>
+  </article>
+</div>
+{% endblock %}

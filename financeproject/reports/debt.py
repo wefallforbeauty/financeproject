@@ -42,6 +42,8 @@ class Inflation:
     rate: float
     """Expected inflation a year, as a fraction."""
     source: str
+    month: date | None = None
+    """The CPI's last month, when the figure is its change over the twelve months to it."""
 
 
 def trailing_inflation(session: Session) -> Inflation | None:
@@ -50,7 +52,7 @@ def trailing_inflation(session: Session) -> Inflation | None:
     if not annual:
         return None
     last = max(annual)
-    return Inflation(annual[last] / 100, f"CPI, 12 months to {last:%Y-%m}")
+    return Inflation(annual[last] / 100, f"CPI, 12 months to {last:%Y-%m}", last)
 
 
 def present_value_at(state: LoanState, on: date, rate: float) -> Decimal:

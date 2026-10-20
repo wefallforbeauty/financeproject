@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Card installments") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Debts") }}</h1><p>{{ _("Purchases in installments, what falls due in the coming months, and each card's balance split.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Debts")) }}
+{% if rows %}
+<article class="card flush mb">
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Bought") }}</th><th>{{ _("Description") }}</th><th class="num">{{ _("Total") }}</th><th class="num">{{ _("Billed") }}</th><th class="num wide-only">{{ _("Billed amount") }}</th><th class="num">{{ _("Still to come") }}</th><th class="wide-only">{{ _("Last month") }}</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr><td class="nowrap">{{ r.plan.transaction.date.isoformat() }}</td>
+        <td><a class="desc" href="/transactions/{{ r.plan.transaction.id }}">{{ r.plan.transaction.payee or r.plan.transaction.description }}</a><span class="sub">{{ r.plan.account.path|short }}</span></td>
+        <td class="num">{{ money(r.plan.total) }}</td><td class="num">{{ r.billed }}/{{ r.plan.count }}</td>
+        <td class="num wide-only">{{ money(r.done) }}</td><td class="num">{{ money(r.left) }}</td><td class="wide-only">{{ r.last.strftime("%Y-%m") }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</article>
+<div class="grid two">
+  <article class="card flush">
+    <div class="card-head"><h2>{{ _("Due in the coming months") }}</h2></div>
+    <div class="table-wrap">
+    <table class="data">
+      <tbody>{% for month, value in dues %}<tr><td>{{ month.strftime("%Y-%m") }}{% if month == current %} <span class="badge accent">{{ _("this month") }}</span>{% endif %}</td><td class="num">{{ money(value) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+  </article>
+  <article class="card flush">
+    <div class="card-head"><h2>{{ _("Cards") }}</h2></div>
+    {% if cards %}
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>{{ _("Card") }}</th><th class="num">{{ _("Owed") }}</th><th class="num">{{ _("Later installments") }}</th><th class="num">{{ _("Rest") }}</th></tr></thead>
+      <tbody>{% for c in cards %}<tr><td>{{ c.path|short }}</td><td class="num">{{ money(c.owed) }}</td><td class="num">{{ money(c.later) }}</td><td class="num">{{ money(c.rest) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+    <p class="pager">{{ _("Rest = what the card owes apart from installments not billed yet.") }}</p>
+    {% else %}<div class="empty"><p>{{ _("No installments are waiting to be billed.") }}</p></div>{% endif %}
+  </article>
+</div>
+{% else %}
+<div class="card"><div class="empty"><h2>{{ _("No installment purchases yet") }}</h2><p>{{ _("Add an expense in installments, or import a card list.") }}</p><a class="btn primary" href="/transactions/new?kind=expense">{{ _("Add a transaction") }}</a></div></div>
+{% endif %}
+{% endblock %}

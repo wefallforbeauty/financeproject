@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Paying off") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Debts") }}</h1><p>{{ _("Plan paying debts off: highest rate first (avalanche) or smallest debt first (snowball).") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Debts")) }}
+{{ error_box(error) }}
+<article class="card mb">
+  <h2>{{ _("Budget and debts") }}</h2>
+  <form class="form" method="get" action="/debts/payoff#plans">
+    <div class="form-split">
+      <label class="field"><span>{{ _("What you can pay towards debts each month") }}</span><input type="text" inputmode="decimal" name="budget" value="{{ q.get('budget', '') }}" required></label>
+      {% if loans %}<div><p class="small muted">{{ _("Loans with terms come in by themselves: their rate with taxes, their installment as the least payment.") }}</p>
+      <ul class="list small">{% for line in loans %}<li><span>{{ line.state.loan.name }}</span><span class="num">{{ money(line.owed) }}</span></li>{% endfor %}</ul></div>{% endif %}
+    </div>
+    {% if others %}
+    <p class="small muted">{{ _("Other debts take part when you give their rate or least payment:") }}</p>
+    <div class="fieldsets">
+    {% for line in others %}
+      <fieldset>
+        <legend>{{ line.account|short }} · {{ money(line.owed) }}</legend>
+        <div class="row">
+          <label class="field"><span>{{ _("Rate, % a month") }}</span><input type="text" inputmode="decimal" name="rate:{{ line.account }}" value="{{ q.get('rate:' ~ line.account, '') }}"></label>
+          <label class="field"><span>{{ _("Least payment") }}</span><input type="text" inputmode="decimal" name="min:{{ line.account }}" value="{{ q.get('min:' ~ line.account, '') }}"></label>
+        </div>
+      </fieldset>
+    {% endfor %}
+    </div>
+    {% endif %}
+    <div class="actions"><button class="btn primary" type="submit">{{ _("Plan") }}</button></div>
+  </form>
+</article>
+{% if result %}
+<article class="card flush mb" id="plans">
+  <div class="card-head"><h2>{{ _("Plans") }}</h2><span class="sub">{{ _("Budget {budget} a month: least payments {least} + extra {extra}", budget=money(result.budget), least=money(result.least), extra=money(result.budget - result.least)) }}</span></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Plan") }}</th><th class="num">{{ _("Debt-free in") }}</th><th class="num">{{ _("Interest and taxes") }}</th><th class="wide-only">{{ _("Order (month paid off)") }}</th></tr></thead>
+    <tbody>
+    {% for label, r in result.plans %}
+      <tr><td><span class="desc">{{ _(label) }}</span><span class="sub narrow-only">{% for name in r.order %}{{ name|short }} ({{ r.paid_off[name] }}){% if not loop.last %}, {% endif %}{% endfor %}</span></td>
+        <td class="num">{{ _.n("{n} month", "{n} months", r.months) if r.feasible else _("never") }}</td>
+        <td class="num">{{ money(r.interest) if r.feasible else "—" }}</td>
+        <td class="sub wide-only">{% for name in r.order %}{{ name|short }} ({{ r.paid_off[name] }}){% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if result.saving is not none %}<p class="pager">{% if result.saving > 0 %}{{ _("Avalanche saves {amount} in interest; snowball clears a first debt sooner, which helps some people keep going.", amount=money(result.saving)) }}{% else %}{{ _("Both orders cost the same here.") }}{% endif %}</p>{% endif %}
+</article>
+<article class="card flush">
+  <div class="card-head"><h2>{{ _("Debts") }}</h2><span class="sub">{{ _("rates include KKDF and BSMV") }}</span></div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Debt") }}</th><th class="num">{{ _("Owed") }}</th><th class="num">{{ _("Rate a month") }}</th><th class="num">{{ _("Least payment") }}</th></tr></thead>
+    <tbody>{% for d in result.debts %}<tr><td>{{ d.name|short }}</td><td class="num">{{ money(d.balance) }}</td><td class="num">{{ percent(d.monthly_rate, 2) }}</td><td class="num">{{ money(d.minimum) }}</td></tr>{% endfor %}</tbody>
+  </table>
+  </div>
+  <p class="pager">{{ _("Interest is charged monthly on what is owed; extra payments lower the principal at no fee.") }}</p>
+</article>
+{% else %}
+<article class="card"><div class="empty"><p>{{ _("Give a monthly budget to compare the plans.") }}</p></div></article>
+{% endif %}
+{% endblock %}

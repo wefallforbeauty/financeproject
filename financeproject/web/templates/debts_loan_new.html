@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box, account_options with context %}
+{% block title %}{{ _("Add a loan") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Add a loan") }}</h1><p>{{ _("Its terms as on the papers: the payment plan and the annual cost rate follow from them, and statement lines with its number are split into principal, interest and taxes.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Debts")) }}
+{{ error_box(error) }}
+<article class="card">
+<form class="form" method="post" action="/debts/loans/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <div class="row">
+    <label class="field"><span>{{ _("Name") }}</span><input type="text" name="name" value="{{ form.get('name', '') }}" required placeholder="{{ _('Car loan') }}"></label>
+    <label class="field"><span>{{ _("Bank's number for the loan") }}</span><input type="text" name="reference" value="{{ form.get('reference', '') }}" placeholder="12345678-0001"><span class="hint">{{ _("Optional: statement lines with this number are recognized.") }}</span></label>
+  </div>
+  <div class="row">
+    <label class="field"><span>{{ _("Account") }}</span>
+      <select name="account"><option value="">{{ _("A new account…") }}</option>{% for a in liabilities %}<option value="{{ a.path }}" {% if form.get('account') == a.path %}selected{% endif %}>{{ a.path|short }}</option>{% endfor %}</select></label>
+    <label class="field"><span>{{ _("or a new account") }}</span><input type="text" name="new_account" value="{{ form.get('new_account', '') }}" placeholder="Liabilities:Loans:Car"></label>
+    <label class="field"><span>{{ _("Kind of a new account") }}</span>
+      <select name="kind">{% for key, label in kinds.items() %}<option value="{{ key }}" {% if form.get('kind', 'consumer_loan') == key %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="row">
+    <label class="field"><span>{{ _("Principal") }}</span><input type="text" inputmode="decimal" name="principal" value="{{ form.get('principal', '') }}" required></label>
+    <label class="field"><span>{{ _("Number of installments") }}</span><input type="number" min="1" max="480" name="count" value="{{ form.get('count', '') }}" required></label>
+    <label class="field"><span>{{ _("First installment") }}</span><input type="date" name="first_due" value="{{ form.get('first_due', '') }}" required></label>
+  </div>
+  <fieldset>
+    <legend>{{ _("Terms") }}</legend>
+    <label class="check"><input type="radio" name="terms" value="rate" {% if form.get('terms', 'rate') == 'rate' %}checked{% endif %}> {{ _("The contractual interest rate a month, without KKDF and BSMV") }}</label>
+    <label class="check"><input type="radio" name="terms" value="installment" {% if form.get('terms') == 'installment' %}checked{% endif %}> {{ _("The installment on the papers (the rate is worked out from it)") }}</label>
+    <div class="row mt">
+      <label class="field"><span>{{ _("Interest rate, % a month") }}</span><input type="text" inputmode="decimal" name="rate" value="{{ form.get('rate', '') }}" placeholder="3.49"></label>
+      <label class="field"><span>{{ _("Installment") }}</span><input type="text" inputmode="decimal" name="installment" value="{{ form.get('installment', '') }}"></label>
+      <label class="field"><span>{{ _("Repayment") }}</span><select name="method">{% for key, label in [("annuity", _("Equal installments")), ("equal-principal", _("Equal principal"))] %}<option value="{{ key }}" {% if form.get('method', 'annuity') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>{{ _("KKDF, % of the interest") }}</span><input type="text" inputmode="decimal" name="kkdf" value="{{ form.get('kkdf', '') }}" placeholder="{{ _('default for the kind') }}"></label>
+      <label class="field"><span>{{ _("BSMV, % of the interest") }}</span><input type="text" inputmode="decimal" name="bsmv" value="{{ form.get('bsmv', '') }}" placeholder="{{ _('default for the kind') }}"></label>
+      <label class="field"><span>{{ _("Fees paid at the start") }}</span><input type="text" inputmode="decimal" name="fees" value="{{ form.get('fees', '') }}" placeholder="0"></label>
+    </div>
+    <p class="hint">{{ _("Default taxes: 15% KKDF and 15% BSMV for consumer and vehicle loans, none for the others.") }}</p>
+  </fieldset>
+  <fieldset>
+    <legend>{{ _("Its balance") }}</legend>
+    <label class="check"><input type="radio" name="start" value="new" {% if form.get('start', 'new') == 'new' %}checked{% endif %}> {{ _("A new loan: book the payout into an account") }}</label>
+    <label class="field"><span>{{ _("Paid into") }}</span><select name="paid_into">{{ account_options(options.money, form.get('paid_into', ''), True, _("Choose…")) }}</select></label>
+    <label class="field"><span>{{ _("Payout day") }}</span><input type="date" name="disbursed" value="{{ form.get('disbursed', '') }}"><span class="hint">{{ _("Default: a month before the first installment") }}</span></label>
+    <label class="check mt"><input type="radio" name="start" value="before" {% if form.get('start') == 'before' %}checked{% endif %}> {{ _("A loan from before the ledger: installments due by a day count as paid") }}</label>
+    <div class="row">
+      <label class="field"><span>{{ _("That day") }}</span><input type="date" name="opening_on" value="{{ form.get('opening_on', '') }}"></label>
+      <label class="field"><span>{{ _("Principal owed that day") }}</span><input type="text" inputmode="decimal" name="owed" value="{{ form.get('owed', '') }}" placeholder="{{ _('from the plan') }}"></label>
+    </div>
+    <label class="check mt"><input type="radio" name="start" value="ledger" {% if form.get('start') == 'ledger' %}checked{% endif %}> {{ _("The account's transactions already hold the balance") }}</label>
+  </fieldset>
+  <div class="actions"><button class="btn primary" type="submit">{{ _("Add the loan") }}</button><a class="btn" href="/debts">{{ _("Cancel") }}</a></div>
+</form>
+</article>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Recurring payments") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("Subscriptions, bills, rent and salary found in the ledger, and what is expected in the next 60 days.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Recurring") }}</h2>
+    {% if show_all %}<a href="/reports/recurring">{{ _("Hide the ones that stopped") }}</a>{% elif hidden %}<a href="/reports/recurring?all=1">{{ _.n("Show {n} that seems to have stopped", "Show {n} that seem to have stopped", hidden) }}</a>{% endif %}
+  </div>
+  {% if rows %}
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Payee") }}</th><th class="wide-only">{{ _("Category") }}</th><th>{{ _("Every") }}</th><th class="num">{{ _("Amount") }}</th><th class="wide-only">{{ _("Last") }}</th><th>{{ _("Next") }}</th><th>{{ _("Status") }}</th></tr></thead>
+    <tbody>
+    {% for row in rows %}{% set x = row.series %}
+      <tr>
+        <td><span class="desc">{{ x.label }}</span><span class="sub">{{ _("{n} times", n=x.occurrences|length) }}</span></td>
+        <td class="sub wide-only">{{ x.category|short }}</td>
+        <td class="sub">{{ _(x.period.name) }}</td>
+        <td class="num {{ 'in' if x.direction > 0 else '' }}">{{ "" if x.fixed else "≈ " }}{{ "+" if x.direction > 0 else "−" }}{{ money(x.typical) }}{% if x.commodity != "TRY" %} {{ x.commodity }}{% endif %}</td>
+        <td class="nowrap sub wide-only">{{ x.last.on.isoformat() }}</td>
+        <td class="nowrap">{{ x.next_due.isoformat() }}</td>
+        <td><span class="badge {{ 'warning' if row.status == 'late' else '' }}">{{ row.status_label }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if monthly %}<p class="pager">{{ _("Recurring payments come to about {total} a month.", total=monthly) }} {{ _("≈ = the amount varies.") }}</p>{% endif %}
+  {% else %}
+  <div class="empty"><p>{{ _("No recurring payments found yet (a monthly series needs at least three payments).") }}</p></div>
+  {% endif %}
+</article>
+<article class="card flush">
+  <div class="card-head"><h2>{{ _("Coming up in 60 days") }}</h2></div>
+  {% if coming %}
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Date") }}</th><th>{{ _("Payee") }}</th><th class="wide-only">{{ _("Notes") }}</th><th class="num">{{ _("Amount") }}</th></tr></thead>
+    <tbody>
+    {% for u, label, note in coming %}
+      <tr><td class="nowrap">{{ u.on.isoformat() }}</td><td><span class="desc">{{ label }}</span><span class="sub narrow-only">{{ note }}</span></td><td class="sub wide-only">{{ note }}</td>
+        <td class="num {{ 'in' if u.direction > 0 else '' }}">{{ "+" if u.direction > 0 else "−" }}{{ money(u.amount) }}{% if u.commodity != "TRY" %} {{ u.commodity }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="pager">{{ _("Nothing expected.") }}</p>{% endif %}
+</article>
+{% endblock %}

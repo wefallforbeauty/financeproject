@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Change in net worth") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Reports") }}</h1><p>{{ _("Why net worth changed: what was saved, exchange results and the change in the value of what is held.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Reports")) }}
+<form class="filters compact" method="get" action="/reports/change">
+  <label class="field"><span>{{ _("Month") }}</span><input type="month" placeholder="{{ _('YYYY-MM') }}" name="month" value="{{ form.month }}"></label>
+  <label class="field"><span>{{ _("or from the end of") }}</span><input type="date" name="start" value="{{ form.start }}"></label>
+  <label class="field"><span>{{ _("to the end of") }}</span><input type="date" name="end" value="{{ form.end }}"></label>
+  <label class="field"><span>{{ _("Unit") }}</span><select name="unit">{% for key, label in units.items() %}<option value="{{ key }}" {% if unit == key %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}</select></label>
+  <button class="btn" type="submit">{{ _("Show") }}</button>
+</form>
+<p class="muted small">{{ _("From the end of {start} to the end of {end}", start=a.isoformat(), end=b.isoformat()) }} · {% if unit == "real" and base_month %}{{ _("real TRY, in {month} prices", month=base_month.strftime("%Y-%m")) }}{% else %}{{ _(units[unit]) }}{% endif %}</p>
+<article class="card flush">
+  <div class="table-wrap">
+  <table class="data">
+    <tbody>
+      <tr class="total-row"><td>{{ _("Net worth on {on}", on=a.isoformat()) }}</td><td class="num">{{ money(d.start_value, decimals) }} {{ suffix }}</td></tr>
+      {% for g in groups %}
+      <tr><td>{{ _(g.label) }}</td><td class="num">{{ signed(g.value, decimals) }} {{ suffix }}</td></tr>
+      {% for name, v in g.detail %}<tr class="detail-row"><td><span class="indent"></span>{{ name }}</td><td class="num">{{ signed(v, decimals) }}</td></tr>{% endfor %}
+      {% if g.rest %}<tr class="detail-row"><td><span class="indent"></span>{{ _("{n} more", n=g.rest[0]) }}</td><td class="num">{{ signed(g.rest[1], decimals) }}</td></tr>{% endif %}
+      {% endfor %}
+      <tr class="total-row"><td>{{ _("Net saving") }}</td><td class="num">{{ signed(saving, decimals) }} {{ suffix }}</td></tr>
+      {% for label, v in others %}<tr><td>{{ _(label) }}</td><td class="num">{{ signed(v, decimals) }} {{ suffix }}</td></tr>{% endfor %}
+      {% if d.revaluation %}
+      <tr><td>{{ _("Revaluation") }}</td><td class="num">{{ signed(d.revaluation_total, decimals) }} {{ suffix }}</td></tr>
+      {% for commodity, v in revaluation %}<tr class="detail-row"><td><span class="indent"></span>{{ _("TRY (inflation)") if commodity == "TRY" and unit == "real" else commodity }}</td><td class="num">{{ signed(v, decimals) }}</td></tr>{% endfor %}
+      {% endif %}
+    </tbody>
+    <tfoot><tr><td>{{ _("Net worth on {on}", on=b.isoformat()) }}</td><td class="num">{{ money(d.end_value, decimals) }} {{ suffix }}</td></tr></tfoot>
+  </table>
+  </div>
+</article>
+{% if d.residual|abs > 0.01 %}<div class="alert critical mt"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _("The parts do not add up (difference {difference}); please report this.", difference=d.residual) }}</div></div>{% endif %}
+{% if d.unvalued %}<p class="small muted mt">{{ _("Left out, no price on some days: {items}", items=", ".join(d.unvalued)) }}</p>{% endif %}
+{% endblock %}

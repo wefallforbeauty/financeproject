@@ -1,4 +1,4 @@
-# financeproject 04a
+# financeproject 04b
 
 A personal finance program for a household in Türkiye. The goal covers the
 personal balance sheet and net worth, transactions and cash flow, cash-flow
@@ -16,22 +16,28 @@ payments, household financial ratios, and why net worth changed. **02** was
 about debt: loans with their payment plans, payments split into principal,
 interest and taxes, the annual cost rate of any credit offer, cash or
 installments, plans for paying off several debts, and what debts weigh once
-inflation is counted. **03** is about investments: fund prices from TEFAS and
+inflation is counted. **03** was about investments: fund prices from TEFAS and
 share prices from Borsa İstanbul, time- and money-weighted returns in four
 units, risk with a backtest of the value at risk, and concentration with the
 deposit insurance check; it also reads credit card lists from PDF. **04a**
-brings the program into the browser: `finance ui` opens an interface on this
+brought the program into the browser: `finance ui` opens an interface on this
 computer, with the net worth chart, transactions to search, add, edit and
 delete, imports that are previewed line by line and can be undone, a review
 of the uncategorized transactions, accounts and settings, in English or
-Turkish. What changed in this version: [UPDATE_LOG.md](UPDATE_LOG.md).
+Turkish. **04b** brings the rest into the interface: the reports with their
+charts, loans that are added, paid and deleted there with their payment
+plans, card installments, plans for paying debts off, two calculators for
+credit offers, the investments' returns, risk and concentration, and the
+categorization rules. What changed in this version:
+[UPDATE_LOG.md](UPDATE_LOG.md).
 Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
 [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 
 - **The interface** (`finance ui`): a web application that runs on this
-  computer only, in English or Turkish, light or dark. Every change is kept
-  in a history, every import can be undone, and a backup is made before
-  either.
+  computer only, in English or Turkish, light or dark: the overview,
+  transactions, imports, categories and rules, accounts, reports, debts and
+  loans, investments, settings. Every change is kept in a history, every
+  import can be undone, and a backup is made before either.
 - **Double-entry ledger** (SQLite). Every transaction balances to zero in every
   unit. Buying and selling currency, gold, funds and shares goes through
   trading accounts (Selinger). Amounts are stored as `Decimal`; floats are
@@ -68,7 +74,7 @@ Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
   Republic of Türkiye (TCMB), Frankfurter XAU/USD for gold, the Turkish CPI
   from EVDS3 (with a key) or the TCMB inflation table, TEFAS for funds, Yahoo
   Finance for Borsa İstanbul shares, and a CPI copy shipped with the package.
-- **Tests:** 279 pytest tests, among them property tests on random ledgers
+- **Tests:** 291 pytest tests, among them property tests on random ledgers
   (Hypothesis), a check of the CPI against TurkStat's real series, a bank's
   published example of the annual cost rate, the spreadsheet function XIRR's
   example, Kupiec's acceptance regions as tabulated by Jorion, made-up bank
@@ -78,6 +84,10 @@ Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
 ![The interface: the overview of the demo household (made-up household, real exchange rates and gold prices)](docs/interface_overview.png)
 
 ![The interface: an import previewed line by line, with the categories still to choose](docs/interface_import.png)
+
+![The interface: where the demo household's September income went, as a Sankey diagram](docs/interface_sankey.png)
+
+![The interface: a loan with its terms, the payment form and the payment plan](docs/interface_loan.png)
 
 ## Quick start
 
@@ -128,16 +138,19 @@ instead of starting another one.
 | Overview | Net worth in four units and its change since the end of last month; net worth month by month in TRY, real TRY, dollars or grams of gold, also as a table; this and last month's income, spending and savings rate; the payments of the next 30 days; the latest transactions; what needs attention (transactions without a category, a ledger that differs from the bank, missing or old prices) |
 | Transactions | Search by text or amount while typing, filters by account, category and dates. One transaction shows its legs, its installment plan and its history, and can be edited (the date, description, payee and note; for a simple one also the amount, category and account) or deleted. New ones: an expense (also in installments), income, a transfer, buying or selling currency, gold or funds |
 | Import | A statement, card list or CSV file is shown line by line before anything is written: what is new, what is in the ledger already, how each line got its category, the balance check. Categories can be changed right there. Every import is recorded and can be undone, all its transactions at once |
-| Categorize | The transactions without a category, each with a suggestion from a rule or the learned model (with its probability): save them one by one, accept all confident ones, or make a rule from a line |
+| Categorize | The transactions without a category, each with a suggestion from a rule or the learned model (with its probability): save them one by one, accept all confident ones, or make a rule from a line. The rules in the order they are tried: add, delete, apply them to the transactions without a category |
 | Accounts | Balances by kind, in their own unit and in TRY; a new account or category with its balance today; closing an account |
+| Reports | The balance sheet on any day, with liquidity and each owner's share; the income statement by category and month, with a chart of income and expenses, also in real TRY; the cash flow of the cash, checking and currency accounts; where the money went (a Sankey diagram of a month or a period, also as a table); why net worth changed (saving, exchange results, revaluation), in four units; household ratios against their benchmarks; recurring payments and what falls due in the next 60 days |
+| Debts | Every debt with its monthly rate, annual cost rate, real rate and what is left to pay in today's money. A loan added from its papers (the rate or the installment; new, taken before the ledger, or already in the ledger), with its payment plan, its payments (also early repayments) and deleting its terms. Card installments by month and each card's balance split; paying several debts off (avalanche or snowball); the annual cost rate of a credit offer; cash or installments |
+| Investments | Returns of the portfolio and of each account, time- and money-weighted, in TRY, real TRY, dollars and grams of gold; volatility, the largest fall, the value at risk with its backtest, correlations; shares by holding, bank and currency, and deposits against the TMSF insurance limit. For every investment account or the ones chosen |
 | History | What was edited, recategorized, deleted, imported or undone, newest first |
 | Settings | Language (English or Turkish), theme (as the system, light, dark) and number format; updating prices in the background; your ledger or the demo household, and building the demo again; backups to make and download; the EVDS key; the desktop shortcut; stopping |
 
 A backup of the ledger is made before every import, undo and deletion (the
 newest 20 are kept). The search, the category review and a background task's
-progress update in place (HTMX); the chart is drawn by ECharts. Both are
-bundled with the package. Messages from the program's core, such as an
-import's errors, stay in English.
+progress update in place (HTMX); the charts are drawn by ECharts, each with
+a table of the same numbers. Both are bundled with the package. Messages from
+the program's core, such as an import's errors, stay in English.
 
 **Phones.** The pages fit a phone's screen, but the interface does not take
 connections from other devices yet: that needs a password, encryption (HTTPS)
@@ -158,19 +171,19 @@ part of an account name instead of the full path: `Groceries` →
 finance account add "Assets:Bank:Ziraat Checking" --kind checking --institution "Ziraat Bankası" --owner Me
 finance account add "Assets:FX:USD Account" --kind fx --commodity USD
 finance account add "Assets:Gold:Grams" --kind gold                 # unit: XAU_G (24 carat, grams)
-finance account add "Liabilities:Credit Card:Bonus" --kind credit_card
+finance account add "Liabilities:Credit Card:Family Card" --kind credit_card
 finance account add "Expenses:Food:Groceries"
 finance account add "Income:Salary"
 
 # Opening balances (natural sign: a debt is entered as a positive amount owed)
 finance opening "Ziraat Checking" 25000 --date 2026-10-01
-finance opening Bonus 3500 --date 2026-10-01
+finance opening "Family Card" 3500 --date 2026-10-01
 
 # Daily transactions (amounts may be written 1,234.56 or 1.234,56)
 finance income 65000 Salary --to "Ziraat Checking"
-finance expense 450.75 Groceries --from Bonus --payee Migros
-finance expense 36000 Electronics --from Bonus --installments 6   # 6 monthly installments from next month
-finance transfer 3500 --from "Ziraat Checking" --to Bonus             # paying the card
+finance expense 450.75 Groceries --from "Family Card" --payee "Mahalle Marketi"
+finance expense 36000 Electronics --from "Family Card" --installments 6   # 6 monthly installments from next month
+finance transfer 3500 --from "Ziraat Checking" --to "Family Card"     # paying the card
 finance exchange --from "Ziraat Checking" --paid 49126.70 --to "USD Account" --received 1000
 finance txn add --description "Gift" -p "Expenses:Gifts=1500" -p "Ziraat Checking"
 
@@ -233,8 +246,8 @@ Internet banking shows a credit card's transactions ("Kart Hareketleri"); save
 the page as PDF, then:
 
 ```sh
-finance import Kart_Hareketleri.pdf --account Bonus --payments-from "Ziraat Checking" --dry-run
-finance import Kart_Hareketleri.pdf --account Bonus --payments-from "Ziraat Checking"
+finance import Kart_Hareketleri.pdf --account "Family Card" --payments-from "Ziraat Checking" --dry-run
+finance import Kart_Hareketleri.pdf --account "Family Card" --payments-from "Ziraat Checking"
 ```
 
 ```
@@ -266,7 +279,7 @@ The standard layout has these headers, in any order. Example file:
 
 ```
 date,description,amount,account,counter_account,commodity,payee,note
-2026-10-01,MİGROS KONYA,-450.00,Bonus,,,Migros,
+2026-10-01,MAHALLE MARKETİ,-450.00,Family Card,,,Mahalle Marketi,
 2026-10-02,Salary,"65,000.00",Ziraat Checking,Income:Salary,,,
 ```
 
@@ -291,8 +304,8 @@ sure), or `Expenses:Uncategorized` / `Income:Uncategorized`. Installment lines
 of defined loans go to the loan.
 
 ```sh
-finance rule add migros Groceries                  # "migros" in the description → Expenses:Food:Groceries
-finance rule add "kahve\s+dunyasi" Coffee --regex
+finance rule add "mahalle market" Groceries        # "mahalle market" in the description → Expenses:Food:Groceries
+finance rule add "kose\s+kahveci" Coffee --regex
 finance categorize --dry-run                       # rules, then the model, on uncategorized transactions
 finance categorize
 finance categorize --evaluate                      # how well would the model have done so far?
@@ -324,7 +337,7 @@ finance loan pay "Car loan" --from "Ziraat Checking"                      # the 
 finance loan pay "Car loan" --from "Ziraat Checking" --amount 20000 --extra  # an early repayment
 
 finance debt                                        # every debt, and the installments left in today's money
-finance payoff --budget 15000 --rate "Bonus=3.5" --minimum "Bonus=3000"   # avalanche or snowball
+finance payoff --budget 15000 --rate "Family Card=3.5" --minimum "Family Card=3000"   # avalanche or snowball
 finance apr --amount 10000 --count 12 --installment 888.49 --last 888.47 --fees 50
 finance cash-or-installments --cash 34000 --installment 6000 --count 6 --rate 2.5
 ```
@@ -653,10 +666,10 @@ them:
 | **01** | Bank statement template (Ziraat Bankası), installment model, cash flow and income statement, Sankey, recurring payments, household financial ratios, decomposition of net worth changes, learning categorizer | ✅ |
 | **02** | Debt module: loans and payment plans, payments split from statements, the annual cost rate, avalanche and snowball, cash or installments, real debt burden | ✅ |
 | **03** | Investments: TEFAS and BIST prices, TWR and XIRR, real returns, volatility, maximum drawdown, VaR and CVaR with backtests, correlation, concentration; card lists from PDF | ✅ |
-| **04a** | Web interface: overview with the net worth chart, transactions (search, add, edit, delete, history), imports with a preview and undo, category review, accounts, settings; English and Turkish; light and dark; desktop shortcut | ✅ this version |
-| **04b** | The rest in the interface: reports (balance sheet, income statement, cash flow, Sankey, change in net worth, ratios), loans and debts, investments (returns, risk, concentration), rules; changes from using 04a | next |
-| **04c** | Phones on the home network (password, HTTPS, pairing), wall monitor (kiosk), guest mode | later |
-| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | after 04b |
+| **04a** | Web interface: overview with the net worth chart, transactions (search, add, edit, delete, history), imports with a preview and undo, category review, accounts, settings; English and Turkish; light and dark; desktop shortcut | ✅ |
+| **04b** | The rest in the interface: reports with charts (balance sheet, income statement, cash flow, Sankey, change in net worth, ratios, recurring payments), loans and debts (payment plans, payments, card installments, paying off, calculators), investments (returns, risk, concentration), rules | ✅ this version |
+| **04c** | Phones on the home network (password, HTTPS, pairing), wall monitor (kiosk), guest mode; changes from using the interface | next |
+| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | after 04c |
 | **06** | Cash-flow forecasting: known flows and statistical forecasts, prediction intervals, backtests | |
 | **07** | Anomaly detection | |
 | **08** | Scenario engine: scenarios, sensitivity (Sobol), Monte Carlo, historical stress tests | |
@@ -671,7 +684,7 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 
 | Source | Idea | Version | Status |
 |---|---|---|---|
-| Monarch Money | Sankey cash-flow diagram | 01 | ✅ `finance sankey` |
+| Monarch Money | Sankey cash-flow diagram | 01 / 04b | ✅ `finance sankey`, and in the interface |
 | | Bill and subscription calendar | 01 / 02 | ◐ recurring payments, card and loan installments are listed ahead (`upcoming`); no reminders |
 | | Shared household use | 00 | ◐ account owners and per-person balance sheets; no separate logins |
 | | "Why did this month change?" | 01 / 10 | ◐ the numbers are there (`finance change`); an AI-written explanation in 10 |
@@ -679,7 +692,7 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 | | Forecasts | 06 | ☐ |
 | Firefly III | Double-entry ledger | 00 | ✅ |
 | | Liabilities with interest (loans, debts, mortgages) | 02 | ✅ `finance loan`: terms, payment plans, payments split into principal, interest and taxes |
-| | Rule engine | 00 / 01 | ◐ description or regex → account; amount and payee conditions later |
+| | Rule engine | 00 / 01 / 04b | ◐ description or regex → account, also in the interface; amount and payee conditions later |
 | | Expected bills | 01 | ◐ found from the ledger, not entered by hand |
 | | Savings goals ("piggy banks") | 09 | ☐ |
 | | REST API | later | ☐ the interface works on the library directly |
@@ -687,7 +700,7 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 | Actual Budget | Envelope budgeting | 09 | ☐ |
 | | Scheduled transactions | 06 | ☐ recurring payments are detected and loan installments are planned; booking them ahead is open |
 | | Custom reports | later | ☐ |
-| Sure (Maybe) | Modern net worth interface | 04a / 04b | ◐ the overview: net worth in four units, month by month, what needs attention; the reports follow in 04b |
+| Sure (Maybe) | Modern net worth interface | 04a / 04b | ✅ the overview (net worth in four units, month by month, what needs attention) and the reports, debts and investments as pages |
 | | Access for AI agents | 10 | ⏸ |
 | Ghostfolio | X-ray: concentration rules (institution, currency, single asset; TMSF deposit insurance limit) | 03 | ✅ `finance concentration` |
 | | Hiding the numbers (Zen mode) | 04c | ⏸ the monitor's guest mode |
@@ -711,54 +724,53 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 
 ## Not done in this version
 
-### From the 04a plan
+### From the 04b plan
 
 - **Phones and other devices** cannot connect yet (04c). The interface listens
   on this computer only; opening it to the home network safely needs a
-  password, HTTPS and pairing.
-- **Reports, loans and investments** are still on the command line
-  (`balance-sheet`, `income-statement`, `loan`, `returns`, `risk`, …); 04b
-  brings them into the interface.
-- **Rules** are made from the category review only; listing, changing and
-  deleting them stays on the command line (`finance rule`).
+  password, HTTPS and pairing. On a phone's screen the wide tables scroll
+  sideways.
+- **Changing in place:** a loan's terms and a rule are added and deleted in
+  the interface, not edited; to change one, delete it and add it again (a
+  loan's account and transactions stay).
+- **Charts:** the income statement and the Sankey diagram have charts; the
+  investments' returns and risk, the debts and the ratios are tables.
 - **One user.** The interface has no logins of its own: whoever uses this
   computer's account can open it, as they can open the ledger file.
 
-### Found while building 04a
+### Found while building 04b
 
-- **Not translated:** messages from the program's core (an import's errors,
-  the ledger's checks) and the names in a ledger (accounts, categories, the
-  demo household's shops and descriptions).
-- **The learned model** can suggest an income category for a refund (money
-  back from a shop). The preview and the category review now offer the
-  expense categories for money in as well, so the refund can go back to what
-  it was spent on.
-- **Number format and language** are separate settings: Turkish texts with
-  `1,234.56` numbers are possible; choose `1.234,56` in Settings.
-- **While a background task writes** (updating prices, building the demo), a
-  change may be refused with "the ledger is busy"; it works again when the
-  task is over.
-- **Transactions with more than two legs** (exchanges, loan payments) can
-  change only their date, description, payee and note; to change the rest,
-  delete one and enter it again.
+- **Small categories:** the interface's Sankey diagram groups the categories
+  under 2% of the budget as "Other", so that every label stays readable
+  (`finance sankey` keeps up to nine). On a narrow screen the labels show the
+  names only; the amounts are in the tooltips and the table under the chart.
+- **Month fields:** Firefox shows them as text fields (write `2026-09`); other
+  browsers may show a month picker.
+- **Numbers:** the number format and the language are separate settings
+  (Turkish texts with `1,234.56` numbers are possible; choose `1.234,56` in
+  Settings). The ratios, the backtest and the correlations follow it too now.
+- **Not translated:** messages from the program's core (an import's or a
+  loan's errors, the ledger's checks) and the names in a ledger (accounts,
+  categories, the demo household's shops and descriptions).
 - **Browsers:** tested with Firefox 158 (driven through WebDriver BiDi) and
-  with FastAPI's test client; other current browsers should work but were not
-  tried.
-- Carried over from 03: dividends are booked by hand; interest rates as a
-  benchmark wait for 05; TEFAS's new API is undocumented and Yahoo's is
-  unofficial; card lists have no balances to check. From 01 and 02: other
-  banks need one sample export each; EVDS has not been tried with a real key;
-  bills and scheduled transactions; the gold price is the international
-  parity.
+  with FastAPI's test client, in both languages, both themes and at a phone's
+  width; other current browsers should work but were not tried.
+- Carried over from 04a: the learned model can suggest an income category for
+  a refund; while a background task writes, a change may be refused with "the
+  ledger is busy"; transactions with more than two legs change only their
+  date, description, payee and note. From 03: dividends are booked by hand;
+  interest rates as a benchmark wait for 05; TEFAS's new API is undocumented
+  and Yahoo's is unofficial; card lists have no balances to check. From 01 and
+  02: other banks need one sample export each; EVDS has not been tried with a
+  real key; bills and scheduled transactions; the gold price is the
+  international parity.
 
 ## Next steps (proposal for the next version)
 
-1. **04b, the rest in the interface:** the reports (balance sheet, income
-   statement, cash flow, Sankey, change in net worth, ratios), loans and debts,
-   investments and rules as pages, with their charts drawn in the browser.
-2. **What using 04a shows:** pages, words or steps that are missing, slow or
-   unclear in daily use.
+1. **What using the interface shows:** pages, words or steps that are missing,
+   slow or unclear in daily use, now that every part of the program is in it.
+2. **04c:** phones on the home network (password, HTTPS, pairing), the wall
+   monitor and its guest mode.
 3. **Bills and scheduled transactions:** confirm a detected recurring payment
    as a bill, get warned when it is late or its amount changes.
-4. **04c:** phones on the home network (password, HTTPS, pairing), the wall
-   monitor and its guest mode. Then 05, portfolio theory.
+4. Then 05, portfolio theory.
