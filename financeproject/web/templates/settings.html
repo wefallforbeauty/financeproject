@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
 {% block title %}{{ _("Settings") }}{% endblock %}
 {% block content %}
 <header class="page-head"><div><h1>{{ _("Settings") }}</h1></div></header>
+{% if on_computer %}{{ subtabs(tabs, tab, _("Settings")) }}{% endif %}
 <div class="grid two">
   <article class="card" id="display">
     <h2>{{ _("Display") }}</h2>
@@ -31,6 +33,24 @@
     {% include "_job.html" %}
   </article>
 
+  {% if not on_computer %}
+  <article class="card" id="this-device">
+    <h2>{{ _("This device") }}</h2>
+    <dl class="kv">
+      <dt>{{ _("Name") }}</dt><dd>{{ device.name }}</dd>
+      <dt>{{ _("Paired") }}</dt><dd>{{ seen_text(device.paired) }}</dd>
+    </dl>
+    <p class="small muted mt">{{ _("The ledger, backups, the EVDS key and the paired devices are managed on the computer.") }}</p>
+  </article>
+  {% if monitors %}
+  <article class="card" id="monitor">
+    <h2>{{ _("Wall monitor") }}</h2>
+    <p class="small muted">{{ _("In guest mode the monitor shows no amounts and no payees.") }}</p>
+    <form method="post" action="/monitor/guests"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="next" value="/settings#monitor">
+      <input type="hidden" name="guests" value="{{ 'off' if guests else 'on' }}"><button class="btn" type="submit">{{ _("Turn guest mode off") if guests else _("Turn guest mode on") }}</button></form>
+  </article>
+  {% endif %}
+  {% else %}
   <article class="card" id="ledger">
     <h2>{{ _("Ledger") }}</h2>
     <dl class="kv">
@@ -88,8 +108,9 @@
       <dt>{{ _("Data folder") }}</dt><dd>{{ data_dir }}</dd>
       <dt>Python</dt><dd>{{ python }}</dd>
     </dl>
-    <p class="small muted mt">{{ _("The interface runs on this computer only. Stopping it closes this page; open it again with finance ui or the shortcut.") }}</p>
+    <p class="small muted mt">{{ _("Stopping the interface closes this page (and phones lose it too); open it again with finance ui or the shortcut.") }}</p>
     <form method="post" action="/quit" data-confirm="{{ _('Stop the interface?') }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn danger" type="submit">{{ _("Stop the interface") }}</button></form>
   </article>
+  {% endif %}
 </div>
 {% endblock %}

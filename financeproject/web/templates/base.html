@@ -2,13 +2,18 @@
 <html lang="{{ lang }}" data-theme="{{ theme }}" data-number-format="{{ number_format }}">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <meta name="referrer" content="same-origin">
 <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false, "selfRequestsOnly": true}'>
 <title>{% block title %}{{ _("Overview") }}{% endblock %} · financeproject</title>
 <link rel="icon" href="/static/img/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/img/icon-180.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="stylesheet" href="/static/css/app.css?v={{ package_version }}">
+<script src="/static/js/early.js?v={{ package_version }}"></script>
 <script src="/static/vendor/htmx.min.js?v=2.0.11" defer></script>
 {% block scripts %}{% endblock %}
 <script src="/static/js/app.js?v={{ package_version }}" defer></script>
@@ -20,7 +25,11 @@
     <a class="brand" href="/"><img src="/static/img/icon.svg" alt=""> financeproject
       {% if demo %}<span class="badge demo" title="{{ _('You are looking at the made-up demo household') }}">{{ _("Demo") }}</span>{% endif %}
     </a>
-    <nav class="nav" aria-label="{{ _('Sections') }}">
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="nav">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3.5 6h13M3.5 10h13M3.5 14h13"/></svg>
+      <span>{{ _("Menu") }}</span>
+    </button>
+    <nav class="nav" id="nav" aria-label="{{ _('Sections') }}">
       {% set nav_items = [
         ("dashboard", "/", _("Overview"), "M3 9.5 10 4l7 5.5V16a1 1 0 0 1-1 1h-3.5v-4.5h-5V17H4a1 1 0 0 1-1-1z"),
         ("transactions", "/transactions", _("Transactions"), "M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"),
@@ -42,7 +51,7 @@
       {% endfor %}
     </nav>
     <div class="sidebar-foot">
-      <div title="{{ ledger_path }}">{{ ledger_path.name }}</div>
+      {% if device %}<div>{{ _("This device: {name}", name=device.name) }}</div>{% else %}<div title="{{ ledger_path }}">{{ ledger_path.name }}</div>{% endif %}
       <div>{{ _("Version") }} {{ version }}</div>
     </div>
   </aside>
@@ -57,5 +66,6 @@
     {% block content %}{% endblock %}
   </main>
 </div>
+{% block fab %}<a class="fab" href="/transactions/new" aria-label="{{ _('Add a transaction') }}" title="{{ _('Add a transaction') }}"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></a>{% endblock %}
 </body>
 </html>

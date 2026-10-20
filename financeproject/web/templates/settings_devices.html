@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs with context %}
+{% block title %}{{ _("Phones and monitor") }}{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Settings") }}</h1><p>{{ _("Phones and a wall monitor on the home network can open the interface too, over an encrypted connection, once they are paired.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Settings")) }}
+<div class="grid two">
+  <article class="card" id="password">
+    <h2>{{ _("Password") }}</h2>
+    <p class="small muted">{{ _("A password is set. A phone asks for it once, when it is paired.") if has_password else _("Set the household's password first: a phone asks for it once, when it is paired.") }}</p>
+    <form class="form" method="post" action="/settings/devices/password">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="row">
+        <label class="field"><span>{{ _("New password") if has_password else _("Password") }}</span><input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+        <label class="field"><span>{{ _("The same again") }}</span><input type="password" name="repeat" minlength="8" autocomplete="new-password" required></label>
+      </div>
+      <div class="actions"><button class="btn {{ '' if has_password else 'primary' }}" type="submit">{{ _("Save the password") }}</button></div>
+    </form>
+  </article>
+
+  <article class="card" id="network">
+    <h2>{{ _("Home network") }}</h2>
+    {% if home %}
+    <p><span class="badge good">{{ _("Open") }}</span> <code>{{ home.url }}</code></p>
+    <p class="small muted">{{ _("Paired phones and monitors on this network open the interface at this address.") }}</p>
+    <form method="post" action="/settings/devices/close"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn" type="submit">{{ _("Close to the home network") }}</button></form>
+    {% else %}
+    <p><span class="badge">{{ _("Closed") }}</span> {{ _("Only this computer can open the interface.") }}</p>
+    {% if addresses %}
+    <form class="form inline" method="post" action="/settings/devices/open">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      {% if addresses|length > 1 %}
+      <label class="field"><span>{{ _("This computer's address") }}</span><select name="address">{% for a in addresses %}<option value="{{ a }}" {% if a == chosen %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+      {% else %}<input type="hidden" name="address" value="{{ addresses[0] }}">{% endif %}
+      <button class="btn primary" type="submit" {% if not has_password %}disabled{% endif %}>{{ _("Open to the home network") }}</button>
+    </form>
+    {% if not has_password %}<p class="small muted mt-small">{{ _("Set a password first.") }}</p>{% endif %}
+    {% else %}<p class="small muted">{{ _("This computer has no home-network address now. Is it on the Wi-Fi?") }}</p>{% endif %}
+    {% endif %}
+    <form class="mt" method="post" action="/settings/devices/start">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label class="check"><input type="checkbox" name="open" value="on" {% if open_at_start %}checked{% endif %}> {{ _("Open whenever the interface starts") }}</label>
+      <div class="actions mt-small"><button class="btn small" type="submit">{{ _("Save") }}</button></div>
+    </form>
+    <p class="small muted mt">{{ _("The firewall of this computer may need to allow port {port} for the home network (see the README).", port=lan_port) }}</p>
+  </article>
+
+  <article class="card" id="pair">
+    <h2>{{ _("Pair a device") }}</h2>
+    {% include "_pairing.html" %}
+  </article>
+
+  <article class="card" id="certificate">
+    <h2>{{ _("Certificate") }}</h2>
+    {% if fingerprint %}
+    <p class="small muted">{{ _("A phone that installs this certificate trusts the connection without a warning. Its fingerprint (SHA-256), to compare with what the phone shows:") }}</p>
+    <p class="fingerprint"><code>{{ fingerprint }}</code></p>
+    {% if server_expiry %}<p class="small muted">{{ _("The server's own certificate renews itself; the current one runs until {day}.", day=server_expiry.date().isoformat()) }}</p>{% endif %}
+    <a class="btn" href="/settings/devices/certificate">{{ _("Download the certificate") }}</a>
+    {% else %}<p class="small muted">{{ _("It is made when the interface is first opened to the home network.") }}</p>{% endif %}
+  </article>
+
+  <article class="card flush span-2" id="devices">
+    <div class="card-head"><h2>{{ _("Paired devices") }}</h2></div>
+    {% if devices %}
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Kind") }}</th><th class="wide-only">{{ _("Paired") }}</th><th>{{ _("Last seen") }}</th><th></th></tr></thead>
+      <tbody>
+      {% for d in devices %}
+        <tr><td><span class="desc">{{ d.name }}</span></td><td>{{ _(kinds[d.kind]) }}</td><td class="wide-only nowrap">{{ seen_text(d.paired) }}</td>
+          <td class="nowrap">{{ seen_text(d.last_seen) }}{% if d.last_address %}<span class="sub block">{{ d.last_address }}</span>{% endif %}</td>
+          <td><form method="post" action="/settings/devices/{{ d.id }}/remove" data-confirm="{{ _('Remove {name}? It will have to be paired again.', name=d.name) }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn small danger" type="submit">{{ _("Remove") }}</button></form></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}<div class="empty"><p>{{ _("No device is paired yet.") }}</p></div>{% endif %}
+  </article>
+
+  <article class="card span-2" id="monitor">
+    <h2>{{ _("Wall monitor") }}</h2>
+    <p class="small muted">{{ _("A tablet or a screen paired as a monitor shows a page of its own: net worth, this month, the next two weeks. In guest mode it shows no amounts and no payees.") }}</p>
+    <form method="post" action="/monitor/guests"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="next" value="/settings/devices#monitor">
+      <input type="hidden" name="guests" value="{{ 'off' if guests else 'on' }}"><button class="btn" type="submit">{{ _("Turn guest mode off") if guests else _("Turn guest mode on") }}</button></form>
+    <p class="mt"><a href="/monitor">{{ _("See the monitor's page") }}</a></p>
+  </article>
+</div>
+{% endblock %}

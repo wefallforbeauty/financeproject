@@ -24,7 +24,9 @@ from financeproject.web.app import (
     redirect,
     render,
 )
+from financeproject.web.devices import MONITOR
 from financeproject.web.i18n import LANGUAGES, translator
+from financeproject.web.views.devices import TABS, guests_on, seen_text
 
 router = APIRouter()
 
@@ -54,6 +56,11 @@ def settings_page(request: Request):
         request,
         "settings.html",
         section="settings",
+        tabs=TABS,
+        tab="general",
+        seen_text=seen_text,
+        guests=guests_on(),
+        monitors=any(d.kind == MONITOR for d in state.devices.devices),
         languages=LANGUAGES,
         themes=THEMES,
         number_formats=NUMBER_FORMATS,

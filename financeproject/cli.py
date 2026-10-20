@@ -1373,10 +1373,26 @@ def ui(
     browser: Annotated[bool, typer.Option(help="Open the browser")] = True,
     stop: Annotated[bool, typer.Option("--stop", help="Stop the running interface")] = False,
     shortcut: Annotated[bool, typer.Option("--shortcut", help="Make a desktop shortcut that opens the interface, then exit")] = False,
+    lan: Annotated[
+        bool, typer.Option("--lan", help="Also open it to paired phones and a wall monitor on the home network (HTTPS, port 8766)")
+    ] = False,
+    password: Annotated[bool, typer.Option("--password", help="Set the password phones give when they are paired, then exit")] = False,
+    forget_devices: Annotated[bool, typer.Option("--forget-devices", help="Remove every paired phone and monitor, then exit")] = False,
 ) -> None:
-    """Open the interface in your browser. It runs on this computer only; stop it with Ctrl+C or from Settings."""
+    """Open the interface in your browser. It runs on this computer only, unless --lan (or Settings → Phones and
+    monitor) opens it to paired devices on the home network; stop it with Ctrl+C or from Settings."""
     from financeproject.web import server
+    from financeproject.web.devices import DeviceStore
 
+    if password:
+        value = typer.prompt("New password", hide_input=True, confirmation_prompt="The same again")
+        DeviceStore().set_password(value)
+        console.print("[green]Password saved.[/] Paired devices stay paired.")
+        return
+    if forget_devices:
+        removed = DeviceStore().remove_all()
+        console.print(f"[green]Removed {removed} paired device{'' if removed == 1 else 's'}.[/] They have to be paired again.")
+        return
     if stop:
         console.print("[green]The interface was stopped.[/]" if server.stop() else "The interface was not running.")
         return
@@ -1387,7 +1403,7 @@ def ui(
         for path in made:
             console.print(f"[green]Shortcut:[/] {escape(str(path))}")
         return
-    server.serve(ctx.obj.db_path, port=port, open_browser=browser, echo=console.print)
+    server.serve(ctx.obj.db_path, port=port, open_browser=browser, lan=lan, echo=console.print)
 
 
 # --------------------------------------------------------------------------- backup and demo

@@ -1112,9 +1112,16 @@ def interface_texts() -> tuple[set[str], set[str]]:
     texts |= {title for _, title in SECTIONS} | {label for _, label in UNITS} | set(ACTION_LABELS.values())
     texts |= {period.name for period in PERIODS}
     from financeproject.reports.context import SOURCE_LABELS
-    from financeproject.web.views import debts, investments, reports, rules
+    from financeproject.web.views import (
+        debts,
+        devices,
+        investments,
+        pairing,
+        reports,
+        rules,
+    )
 
-    for module in (reports, debts, investments, rules):
+    for module in (reports, debts, investments, rules, devices, pairing):
         texts |= set(module.TEXTS)
     texts |= set(SOURCE_LABELS.values())
     return texts, singular

@@ -1,0 +1,22 @@
+<div id="pairing" {% if qr %}hx-get="/settings/devices/pairing" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  {% if pairing and pairing.device %}
+  <div class="alerts"><div class="alert ok"><span class="icon" aria-hidden="true">✓</span><div class="text">{{ _("{name} is paired.", name=pairing.device.name) }}</div></div></div>
+  {% endif %}
+  {% if qr %}
+  <div class="pairing">
+    <div class="qr-box">{{ qr|safe }}</div>
+    <div>
+      <p>{{ _("Scan this code with the camera of the wall monitor, or open this address on it:") if pairing.kind == "monitor" else _("Scan this code with the phone's camera, or open this address on it:") }}</p>
+      <p><code class="url">{{ pair_url }}</code></p>
+      <p class="small muted">{% set minutes = (seconds + 59) // 60 %}{{ _.n("Code {code}: it pairs one device, within the next minute.", "Code {code}: it pairs one device, within the next {n} minutes.", minutes, code=code) }}</p>
+      <form method="post" action="/settings/devices/pair/cancel"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn small ghost" type="submit">{{ _("Cancel") }}</button></form>
+    </div>
+  </div>
+  {% else %}
+  {% if not home %}<p class="small muted">{{ _("Open the interface to the home network first.") }}</p>{% endif %}
+  <div class="actions">
+    <form method="post" action="/settings/devices/pair"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="kind" value="phone"><button class="btn primary" type="submit" {% if not home %}disabled{% endif %}>{{ _("Pair a phone") }}</button></form>
+    <form method="post" action="/settings/devices/pair"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="kind" value="monitor"><button class="btn" type="submit" {% if not home %}disabled{% endif %}>{{ _("Pair a wall monitor") }}</button></form>
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,36 @@
+{% extends "base_bare.html" %}
+{% block title %}{{ _("Pair this device") }}{% endblock %}
+{% block body_class %}bare{% endblock %}
+{% block body %}
+<main class="main bare-page" id="main">
+  <p class="brand"><img src="/static/img/icon.svg" alt=""> financeproject</p>
+  <article class="card">
+    {% if kind %}
+    <h1>{{ _("Pair this wall monitor") if kind == "monitor" else _("Pair this phone") }}</h1>
+    <p class="muted mt-small">{{ _("Give the household's password once. This device stays paired until it is removed on the computer.") }}</p>
+    {% if error %}<div class="alerts" role="alert"><div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text">{{ error }}</div></div></div>{% endif %}
+    <form class="form" method="post" action="/pair">
+      <input type="hidden" name="code" value="{{ code }}">
+      <label class="field"><span>{{ _("A name for this device") }}</span>
+        <input type="text" name="name" value="{{ name }}" maxlength="40" autocomplete="off" placeholder="{{ _('Wall monitor') if kind == 'monitor' else _('Phone') }}"></label>
+      <label class="field"><span>{{ _("Password") }}</span><input type="password" name="password" autocomplete="current-password" required></label>
+      <div class="actions"><button class="btn primary" type="submit">{{ _("Pair") }}</button></div>
+    </form>
+    {% else %}
+    <h1>{{ _("Pair this device") }}</h1>
+    {% if error %}<div class="alerts" role="alert"><div class="alert error"><span class="icon" aria-hidden="true">!</span><div class="text">{{ error }}</div></div></div>{% endif %}
+    <p class="mt-small">{{ _("This pairing code has expired or was used already. On the computer, open Settings → Phones and monitor and make a new one.") }}</p>
+    {% endif %}
+  </article>
+  <article class="card mt">
+    <h2>{{ _("The browser's warning") }}</h2>
+    <p class="small muted mt-small">{{ _("The connection is encrypted with a certificate of the computer's own, which the browser does not know, so it warns at the first visit. Installing the certificate once stops the warning:") }}</p>
+    <p><a class="btn" href="/ca.crt">{{ _("Download the certificate") }}</a></p>
+    <ul class="steps small muted">
+      <li>{{ _("Android: in Settings, search for \"CA certificate\" (Security → … → Install a certificate → CA certificate) and choose the downloaded file.") }}</li>
+      <li>{{ _("iPhone and iPad: \"Profile Downloaded\" at the top of Settings → Install; then Settings → General → About → Certificate Trust Settings, and turn on full trust for it.") }}</li>
+    </ul>
+    <p class="small muted">{{ _("Before installing, compare its fingerprint with the one the computer shows under Settings → Phones and monitor.") }}</p>
+  </article>
+</main>
+{% endblock %}

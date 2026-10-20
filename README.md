@@ -1,4 +1,4 @@
-# financeproject 04b
+# financeproject 04c
 
 A personal finance program for a household in Türkiye. The goal covers the
 personal balance sheet and net worth, transactions and cash flow, cash-flow
@@ -24,20 +24,27 @@ brought the program into the browser: `finance ui` opens an interface on this
 computer, with the net worth chart, transactions to search, add, edit and
 delete, imports that are previewed line by line and can be undone, a review
 of the uncategorized transactions, accounts and settings, in English or
-Turkish. **04b** brings the rest into the interface: the reports with their
-charts, loans that are added, paid and deleted there with their payment
-plans, card installments, plans for paying debts off, two calculators for
-credit offers, the investments' returns, risk and concentration, and the
-categorization rules. What changed in this version:
-[UPDATE_LOG.md](UPDATE_LOG.md).
+Turkish. **04b** brought the rest into the interface: the reports with their
+charts, loans with their payment plans, card installments, plans for paying
+debts off, two calculators for credit offers, the investments' returns, risk
+and concentration, and the categorization rules. **04c** opens the interface
+to the household's phones and a wall monitor on the home network: over an
+encrypted connection (HTTPS), to the devices paired once with a code shown
+on the computer and the household's password; a wall monitor shows a page of
+its own, with a guest mode that hides every amount. What changed in this
+version: [UPDATE_LOG.md](UPDATE_LOG.md).
 Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
 [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 
 - **The interface** (`finance ui`): a web application that runs on this
-  computer only, in English or Turkish, light or dark: the overview,
+  computer, in English or Turkish, light or dark: the overview,
   transactions, imports, categories and rules, accounts, reports, debts and
   loans, investments, settings. Every change is kept in a history, every
   import can be undone, and a backup is made before either.
+- **Phones and a wall monitor** (`finance ui --lan`): paired devices on the
+  home network open the interface over HTTPS with a certificate of the
+  computer's own; a wall monitor shows net worth, this month and the next two
+  weeks, and hides every amount in guest mode.
 - **Double-entry ledger** (SQLite). Every transaction balances to zero in every
   unit. Buying and selling currency, gold, funds and shares goes through
   trading accounts (Selinger). Amounts are stored as `Decimal`; floats are
@@ -74,12 +81,14 @@ Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
   Republic of Türkiye (TCMB), Frankfurter XAU/USD for gold, the Turkish CPI
   from EVDS3 (with a key) or the TCMB inflation table, TEFAS for funds, Yahoo
   Finance for Borsa İstanbul shares, and a CPI copy shipped with the package.
-- **Tests:** 291 pytest tests, among them property tests on random ledgers
+- **Tests:** 312 pytest tests, among them property tests on random ledgers
   (Hypothesis), a check of the CPI against TurkStat's real series, a bank's
   published example of the annual cost rate, the spreadsheet function XIRR's
   example, Kupiec's acceptance regions as tabulated by Jorion, made-up bank
-  statements and a card list PDF in Ziraat Bankası's formats, and every page of
-  the interface with its security checks and its Turkish translation.
+  statements and a card list PDF in Ziraat Bankası's formats, every page of
+  the interface with its security checks and its Turkish translation, and the
+  home network: pairing, what a phone and a monitor may open, the certificate
+  chain and its name constraints, and a real HTTPS server.
 
 ![The interface: the overview of the demo household (made-up household, real exchange rates and gold prices)](docs/interface_overview.png)
 
@@ -100,7 +109,8 @@ python -m venv .venv
 #   Windows (PowerShell):  .venv\Scripts\Activate.ps1
 #   macOS and Linux:       source .venv/bin/activate
 pip install -e ".[dev]"     # sqlalchemy, pandas, httpx, typer, rich, platformdirs, python-calamine, pypdf,
-                            # fastapi, uvicorn, jinja2, python-multipart, matplotlib, pytest, hypothesis
+                            # fastapi, uvicorn, jinja2, python-multipart, cryptography, segno,
+                            # matplotlib, pytest, hypothesis
 ```
 
 With the environment active:
@@ -120,7 +130,8 @@ to Python 2 or is missing, use `python3`.
 ## The interface
 
 `finance ui` starts the interface and opens it in the browser. It runs on this
-computer only, and the page loads nothing from the internet.
+computer, and the page loads nothing from the internet; phones and a wall
+monitor on the home network can be let in too (see below).
 
 ```sh
 finance ui                      # your ledger; the first time, the welcome page creates it or shows the demo
@@ -128,6 +139,9 @@ finance -d <demo path> ui       # the demo household
 finance ui --no-browser         # prints the link instead of opening it (port 8765, or another free one)
 finance ui --stop               # stops it; so do Settings → Stop the interface and Ctrl+C
 finance ui --shortcut           # an icon on the desktop and in the application menu that opens it
+finance ui --lan                # also open it to paired phones and a wall monitor on the home network
+finance ui --password           # set the password a phone gives when it is paired
+finance ui --forget-devices     # remove every paired phone and monitor
 ```
 
 `finance ui` run again while the interface is running opens the browser at it
@@ -144,7 +158,7 @@ instead of starting another one.
 | Debts | Every debt with its monthly rate, annual cost rate, real rate and what is left to pay in today's money. A loan added from its papers (the rate or the installment; new, taken before the ledger, or already in the ledger), with its payment plan, its payments (also early repayments) and deleting its terms. Card installments by month and each card's balance split; paying several debts off (avalanche or snowball); the annual cost rate of a credit offer; cash or installments |
 | Investments | Returns of the portfolio and of each account, time- and money-weighted, in TRY, real TRY, dollars and grams of gold; volatility, the largest fall, the value at risk with its backtest, correlations; shares by holding, bank and currency, and deposits against the TMSF insurance limit. For every investment account or the ones chosen |
 | History | What was edited, recategorized, deleted, imported or undone, newest first |
-| Settings | Language (English or Turkish), theme (as the system, light, dark) and number format; updating prices in the background; your ledger or the demo household, and building the demo again; backups to make and download; the EVDS key; the desktop shortcut; stopping |
+| Settings | Language (English or Turkish), theme (as the system, light, dark) and number format; updating prices in the background; your ledger or the demo household, and building the demo again; backups to make and download; the EVDS key; the desktop shortcut; stopping. **Phones and monitor:** the household's password, opening to the home network, pairing and removing devices, the certificate, guest mode |
 
 A backup of the ledger is made before every import, undo and deletion (the
 newest 20 are kept). The search, the category review and a background task's
@@ -152,11 +166,56 @@ progress update in place (HTMX); the charts are drawn by ECharts, each with
 a table of the same numbers. Both are bundled with the package. Messages from
 the program's core, such as an import's errors, stay in English.
 
-**Phones.** The pages fit a phone's screen, but the interface does not take
-connections from other devices yet: that needs a password, encryption (HTTPS)
-and pairing each phone once. It is planned for 04c.
+### Phones and a wall monitor
+
+The household's phones and a wall monitor (a tablet or a screen) on the home
+network can open the interface too. The computer stays the place where the
+interface runs: it must be on, with `finance ui` running.
+
+1. **A password.** Settings → Phones and monitor → Password (or
+   `finance ui --password`). A phone asks for it once, when it is paired.
+2. **Open to the home network.** Settings → Phones and monitor → Open to the
+   home network (or `finance ui --lan`). The interface then answers at
+   `https://<this computer's address>:8766` as well; "Open whenever the
+   interface starts" keeps it so, on this network only (on another network,
+   a café's for example, it stays closed until it is opened by hand).
+3. **Pair a device.** Pair a phone (or a wall monitor) shows a QR code. Scan
+   it with the device's camera, give the password and a name: the device is
+   paired, and stays so until it is removed under Paired devices. A code
+   pairs one device within ten minutes.
+4. **The browser's warning.** The connection is encrypted with a certificate
+   of the computer's own, which phones do not know, so the browser warns at
+   the first visit. Installing the certificate once stops the warning; the
+   pairing page has the link and the steps (Android: Settings → search "CA
+   certificate"; iPhone: install the downloaded profile, then General → About
+   → Certificate Trust Settings). Compare its fingerprint with the one under
+   Settings → Phones and monitor first.
+
+A phone sees every page but this computer's own settings (the ledger,
+backups, keys, the devices, stopping). On a phone the menu folds behind a
+button and a round button adds a transaction; "Add to home screen" makes an
+icon that opens the interface like an app. A **wall monitor** shows one page:
+the time, net worth and its change, this month's income, spending and savings
+rate, net worth over twelve months and the payments of the next two weeks; it
+refreshes itself and keeps the screen on where the browser allows it. **Guest
+mode** (a button on the monitor, or Settings) hides every amount and payee:
+changes are shown as percentages, the payments by their kind. The monitor can
+turn it on, but only a phone or the computer can turn it off.
+
+**Firewall and address.** The computer must accept connections to port 8766
+from the home network. Fedora's default zone allows it; on Ubuntu `ufw`, if it
+is on, needs `sudo ufw allow from 192.168.0.0/16 to any port 8766 proto tcp`;
+Windows and macOS ask the first time the interface opens to the network
+(allow it on private networks only). A device stays paired at the address
+it was paired at, so a fixed address for the computer in the router (a DHCP
+reservation) keeps the phones' links working; if the address changes, open
+the interface to the network again from Settings and pair the devices again.
+A VPN on the computer may block the home network unless it allows local
+connections.
 
 ![The overview on a phone, in the dark theme](docs/interface_phone_dark.png)
+
+![The wall monitor of the demo household (made-up household, real exchange rates and gold prices)](docs/interface_monitor.png)
 
 ## Usage
 
@@ -564,7 +623,7 @@ Avalanche saves 281.21 in interest; snowball clears a first debt sooner, which h
 | `financeproject/prices/` | Clients for the TCMB XML, Frankfurter, EVDS3, the TCMB CPI table, TEFAS and Yahoo Finance; storing and updating |
 | `financeproject/ingest/` | Reading files (`tables`, `pdf`), bank statements (`statement`) and their templates (`banks/`: account statements, card lists), CSV, writing imports and undoing them (`importer`), rules, the learned categorizer (`learn`), the category review (`review`) |
 | `financeproject/reports/` | Balance sheet, net worth series and chart, change in net worth (`change`), income statement (`income`), cash flow, Sankey, ratios, recurring payments, debts (`debt`), investments: returns, risk, concentration (`investments`), what needs attention (`alerts`) |
-| `financeproject/web/` | The interface: the application (`app`), its security checks (`security`), the pages (`views/`, `templates/`), styles, scripts and the bundled HTMX and ECharts (`static/`), the Turkish texts (`locales/`), the server (`server`), background tasks (`jobs`), the desktop shortcut (`shortcut`) |
+| `financeproject/web/` | The interface: the application (`app`), its security checks (`security`), the pages (`views/`, `templates/`), styles, scripts, icons and the bundled HTMX and ECharts (`static/`), the Turkish texts (`locales/`), the server (`server`), the home network (`lan`), paired devices and pairing codes (`devices`), the certificates (`tls`), background tasks (`jobs`), the desktop shortcut (`shortcut`) |
 | `financeproject/cli.py` | Command line (`finance`) |
 | `financeproject/demo.py` | The made-up demo household |
 | `financeproject/data/` | Public data shipped with the package: the CPI copy ([description](financeproject/data/README.md)) |
@@ -601,7 +660,8 @@ The repository is public, so **personal data never goes into it**.
   readable only by the user (0600 on macOS and Linux).
 - **Demo data:** `finance demo` and the interface's demo never write into the
   real ledger.
-- **The interface** listens on 127.0.0.1, so other devices cannot reach it.
+- **The interface** listens on 127.0.0.1, so other devices cannot reach it
+  (unless it is opened to the home network, below).
   Opening it takes the link with the running interface's random key, which
   `finance ui` opens; the browser keeps the key in a cookie for this address
   only. Another web page cannot use the interface: requests must name this
@@ -614,6 +674,19 @@ The repository is public, so **personal data never goes into it**.
   `uploads` folder (readable only by you) between the preview and the import
   and is deleted after either; `ui.json` there holds the running interface's
   port and key, and is removed when it stops.
+- **The home network** (only when it is opened): a second server answers over
+  HTTPS on this computer's private address, to clients with private addresses
+  only, and checks the address they name. A device that is not paired sees
+  the pairing page only. Pairing takes a one-time code, valid for ten minutes
+  and five tries, and the household's password (kept as an scrypt hash); ten
+  wrong tries in ten minutes stop pairing. A paired device keeps a random key
+  in a cookie that is sent over HTTPS only, and only its hash is stored, in
+  `devices.json` of the settings folder (readable only by you), with the
+  device's name and when and from which address it was last seen. The
+  certificates are in `tls/` there: the certificate authority can vouch only
+  for private addresses and this computer's names (name constraints), so a
+  phone that trusts it trusts nothing on the internet; the keys are readable
+  only by you.
 - **Encryption:** the ledger file itself is not encrypted yet. An encrypted
   disk (BitLocker, FileVault, LUKS) is recommended. Encrypting the file itself
   (SQLCipher) is among the next steps.
@@ -667,9 +740,9 @@ them:
 | **02** | Debt module: loans and payment plans, payments split from statements, the annual cost rate, avalanche and snowball, cash or installments, real debt burden | ✅ |
 | **03** | Investments: TEFAS and BIST prices, TWR and XIRR, real returns, volatility, maximum drawdown, VaR and CVaR with backtests, correlation, concentration; card lists from PDF | ✅ |
 | **04a** | Web interface: overview with the net worth chart, transactions (search, add, edit, delete, history), imports with a preview and undo, category review, accounts, settings; English and Turkish; light and dark; desktop shortcut | ✅ |
-| **04b** | The rest in the interface: reports with charts (balance sheet, income statement, cash flow, Sankey, change in net worth, ratios, recurring payments), loans and debts (payment plans, payments, card installments, paying off, calculators), investments (returns, risk, concentration), rules | ✅ this version |
-| **04c** | Phones on the home network (password, HTTPS, pairing), wall monitor (kiosk), guest mode; changes from using the interface | next |
-| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | after 04c |
+| **04b** | The rest in the interface: reports with charts (balance sheet, income statement, cash flow, Sankey, change in net worth, ratios, recurring payments), loans and debts (payment plans, payments, card installments, paying off, calculators), investments (returns, risk, concentration), rules | ✅ |
+| **04c** | Phones and a wall monitor on the home network: a password, HTTPS with a certificate of the computer's own, pairing with a QR code, the monitor's page and its guest mode; the interface on a phone (menu, add button, home-screen icon) | ✅ this version |
+| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | next |
 | **06** | Cash-flow forecasting: known flows and statistical forecasts, prediction intervals, backtests | |
 | **07** | Anomaly detection | |
 | **08** | Scenario engine: scenarios, sensitivity (Sobol), Monte Carlo, historical stress tests | |
@@ -703,7 +776,7 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 | Sure (Maybe) | Modern net worth interface | 04a / 04b | ✅ the overview (net worth in four units, month by month, what needs attention) and the reports, debts and investments as pages |
 | | Access for AI agents | 10 | ⏸ |
 | Ghostfolio | X-ray: concentration rules (institution, currency, single asset; TMSF deposit insurance limit) | 03 | ✅ `finance concentration` |
-| | Hiding the numbers (Zen mode) | 04c | ⏸ the monitor's guest mode |
+| | Hiding the numbers (Zen mode) | 04c | ✅ the wall monitor's guest mode |
 | Wealthfolio | TWR and MWR side by side | 03 | ✅ `finance returns` |
 | | Splitting a period's change into its sources (income, gains, fees, taxes, FX) | 01 | ✅ `finance change`, in four units |
 | | API keys in the operating system keyring | later | ☐ for now a settings file readable only by the user |
@@ -724,40 +797,49 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 
 ## Not done in this version
 
-### From the 04b plan
+### From the 04c plan
 
-- **Phones and other devices** cannot connect yet (04c). The interface listens
-  on this computer only; opening it to the home network safely needs a
-  password, HTTPS and pairing. On a phone's screen the wide tables scroll
-  sideways.
-- **Changing in place:** a loan's terms and a rule are added and deleted in
-  the interface, not edited; to change one, delete it and add it again (a
-  loan's account and transactions stay).
-- **Charts:** the income statement and the Sankey diagram have charts; the
-  investments' returns and risk, the debts and the ratios are tables.
-- **One user.** The interface has no logins of its own: whoever uses this
-  computer's account can open it, as they can open the ledger file.
+- **Real phones were not tried.** Pairing, the certificate, the home-screen
+  icon and the monitor were tested in Firefox 158 at a phone's width and a
+  tablet's, over a real HTTPS server on this computer, and with FastAPI's
+  test client; the certificate's steps on Android and iPhone follow their
+  documentation and may differ by version.
+- **Outside the home** the interface cannot be reached, on purpose: only
+  devices on the home network, with private addresses, are served. A VPN of
+  your own into the home network would be the way; it is not part of the
+  program.
+- **Display settings are shared:** the language, theme and number format
+  chosen on a phone change them on the computer too ("Like the system" lets
+  every device follow its own theme).
+- **No notifications:** a phone shows what is due when the interface is open;
+  it does not remind on its own.
+- **The computer must be on:** when it sleeps or `finance ui` stops, phones
+  and the monitor lose the interface until it runs again.
+- **Changing in place** (from 04b): a loan's terms and a rule are added and
+  deleted, not edited. **One household password**; there are no separate
+  users, and a paired phone can do everything but this computer's settings.
 
-### Found while building 04b
+### Found while building 04c
 
-- **Small categories:** the interface's Sankey diagram groups the categories
-  under 2% of the budget as "Other", so that every label stays readable
-  (`finance sankey` keeps up to nine). On a narrow screen the labels show the
-  names only; the amounts are in the tooltips and the table under the chart.
-- **Month fields:** Firefox shows them as text fields (write `2026-09`); other
-  browsers may show a month picker.
-- **Numbers:** the number format and the language are separate settings
-  (Turkish texts with `1,234.56` numbers are possible; choose `1.234,56` in
-  Settings). The ratios, the backtest and the correlations follow it too now.
-- **Not translated:** messages from the program's core (an import's or a
-  loan's errors, the ledger's checks) and the names in a ledger (accounts,
-  categories, the demo household's shops and descriptions).
+- **A part of a page that refreshes itself** (the monitor's panel) gets its
+  chart data from an attribute: HTMX leaves `<script>` elements out of what it
+  swaps in, because the pages run no scripts of their own inline.
+- **Removing a device** ends its access at once; a monitor notices within
+  seconds and shows that it is not paired. Its cookie lasts 400 days (the
+  most browsers allow), after which it must be paired again.
+- **Pairing codes** live in memory: restarting the interface ends the one in
+  use; paired devices stay paired.
+- **The certificate authority** is made for this computer's name; renaming the
+  computer makes a new one, which phones must install again.
 - **Browsers:** tested with Firefox 158 (driven through WebDriver BiDi) and
   with FastAPI's test client, in both languages, both themes and at a phone's
   width; other current browsers should work but were not tried.
-- Carried over from 04a: the learned model can suggest an income category for
-  a refund; while a background task writes, a change may be refused with "the
-  ledger is busy"; transactions with more than two legs change only their
+- Carried over from 04b: the interface's Sankey groups categories under 2% of
+  the budget as "Other"; Firefox shows month fields as text (write
+  `2026-09`); messages from the program's core and the names in a ledger are
+  not translated. From 04a: the learned model can suggest an income category
+  for a refund; while a background task writes, a change may be refused with
+  "the ledger is busy"; transactions with more than two legs change only their
   date, description, payee and note. From 03: dividends are booked by hand;
   interest rates as a benchmark wait for 05; TEFAS's new API is undocumented
   and Yahoo's is unofficial; card lists have no balances to check. From 01 and
@@ -767,10 +849,11 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 
 ## Next steps (proposal for the next version)
 
-1. **What using the interface shows:** pages, words or steps that are missing,
-   slow or unclear in daily use, now that every part of the program is in it.
-2. **04c:** phones on the home network (password, HTTPS, pairing), the wall
-   monitor and its guest mode.
+1. **What using the interface shows,** on the computer and now on the phones:
+   pages, words or steps that are missing, slow or unclear in daily use.
+2. **05, portfolio theory:** the efficient frontier, the global minimum
+   variance and tangency portfolios, HRP and 1/N on the investments' returns,
+   with shrinkage and out-of-sample tests.
 3. **Bills and scheduled transactions:** confirm a detected recurring payment
-   as a bill, get warned when it is late or its amount changes.
-4. Then 05, portfolio theory.
+   as a bill, get warned when it is late or its amount changes (on the phone
+   too).
