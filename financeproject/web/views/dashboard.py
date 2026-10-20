@@ -46,41 +46,52 @@ def _number(value) -> float | None:
     return None if math.isnan(number) else round(number, 4)
 
 
-@router.get("/")
-def dashboard(request: Request):
-    today = date.today()
+def overview(s, today: date) -> dict:
+    """What the overview and the wall monitor show: net worth now and month by month (with the month before's
+    end), this and last month's income and spending, and the payments of the next 30 days."""
     this_month = month_start(today)
     last_month = add_months(this_month, -1)
-    with ledger_session(request) as s:
-        market = load_market_data(s)
-        sheet = build_balance_sheet(s, today, market=market)
-        first = transaction_date_range(s)[0]
-        series = {"dates": [], "units": {}}
-        if first is not None:
-            start = max(add_months(this_month, -12), month_start(first))
-            frame = networth_series(s, start, today, "month", market=market)
-            series = {
-                "dates": [d.isoformat() for d in frame["date"]],
-                "units": {key: [_number(v) for v in frame[key]] for key, _ in UNITS},
-            }
-        months = income_statement(s, last_month, this_month, depth=1, market=market, end=today)
-        flows = {
-            m: {
-                "income": months.total_income(m),
-                "expenses": months.total_expenses(m),
-                "net": months.net(m),
-                "rate": months.savings_rate(m),
-            }
-            for m in (last_month, this_month)
+    market = load_market_data(s)
+    sheet = build_balance_sheet(s, today, market=market)
+    first = transaction_date_range(s)[0]
+    series = {"dates": [], "units": {}}
+    if first is not None:
+        start = max(add_months(this_month, -12), month_start(first))
+        frame = networth_series(s, start, today, "month", market=market)
+        series = {
+            "dates": [d.isoformat() for d in frame["date"]],
+            "units": {key: [_number(v) for v in frame[key]] for key, _ in UNITS},
         }
-        coming = upcoming(s, today, 30)[:10] if first is not None else []
-        recent = find_transactions(s, limit=8)[0]
-        notes = alerts(s, sheet.net_worth, today)
+    months = income_statement(s, last_month, this_month, depth=1, market=market, end=today)
+    flows = {
+        m: {
+            "income": months.total_income(m),
+            "expenses": months.total_expenses(m),
+            "net": months.net(m),
+            "rate": months.savings_rate(m),
+        }
+        for m in (last_month, this_month)
+    }
     previous = None
     if len(series["dates"]) >= 2 and series["units"]["nominal_try"][-2] is not None:
         previous = series["units"]["nominal_try"][-2]
+    return {
+        "market": market, "sheet": sheet, "series": series, "flows": flows, "previous": previous,
+        "coming": upcoming(s, today, 30) if first is not None else [], "this_month": this_month, "last_month": last_month,
+    }
+
+
+@router.get("/")
+def dashboard(request: Request):
+    today = date.today()
+    with ledger_session(request) as s:
+        data = overview(s, today)
+        recent = find_transactions(s, limit=8)[0]
+        notes = alerts(s, data["sheet"].net_worth, today)
+    market, sheet, series, flows = data["market"], data["sheet"], data["series"], data["flows"]
+    previous, this_month, last_month = data["previous"], data["this_month"], data["last_month"]
     _ = translator(config.language())
-    coming = [(item, *coming_text(item, _, this_month)) for item in coming]
+    coming = [(item, *coming_text(item, _, this_month)) for item in data["coming"][:10]]
     chart = {
         **series,
         "unit": "nominal_try",

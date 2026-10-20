@@ -55,9 +55,16 @@ from financeproject.ledger.history import (
     RECATEGORIZE,
     UNDO_IMPORT,
 )
+from financeproject.web.devices import DeviceStore, Pairings
 from financeproject.web.i18n import LANGUAGES, translator
 from financeproject.web.jobs import Jobs
-from financeproject.web.security import Guard, check_csrf, cookie_name, csrf_for
+from financeproject.web.security import (
+    Guard,
+    check_csrf,
+    cookie_name,
+    csrf_for,
+    session_of,
+)
 
 WEB = resources.files("financeproject.web")
 templates = Jinja2Templates(directory=str(WEB / "templates"))
@@ -123,7 +130,8 @@ def ledger_session(request: Request) -> Iterator[Session]:
 
 
 def flash(request: Request, kind: str, text: str) -> None:
-    request.app.state.flashes.append(Flash(kind, text))
+    """A message for the next page this session (this computer, or one device) opens."""
+    request.app.state.flashes.setdefault(session_of(request).key, []).append(Flash(kind, text))
 
 
 def is_demo(request: Request) -> bool:
@@ -207,8 +215,8 @@ def local_time(moment: datetime | None) -> str:
     if moment is None:
         return ""
     if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC).astimezone()
-    return moment.strftime("%Y-%m-%d %H:%M")
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _uncategorized(state) -> int:
@@ -227,7 +235,8 @@ def render(request: Request, template: str, status: int = 200, **context) -> HTM
     state = request.app.state
     language = config.language()
     _ = translator(language)
-    flashes, state.flashes = state.flashes, []
+    session = session_of(request)
+    flashes = state.flashes.pop(session.key, [])
     base = {
         "_": _,
         "action_label": lambda action: _(ACTION_LABELS.get(action, action)),
@@ -235,7 +244,10 @@ def render(request: Request, template: str, status: int = 200, **context) -> HTM
         "languages": LANGUAGES,
         "theme": config.theme(),
         "number_format": number_format(),
-        "csrf": state.csrf,
+        "csrf": session.csrf,
+        "session": session,
+        "on_computer": session.on_computer,
+        "device": session.device,
         "flashes": flashes,
         "version": VERSION_LABEL,
         "package_version": __version__,
@@ -277,9 +289,12 @@ def create_app(
         categorize,
         dashboard,
         debts,
+        devices,
         history,
         imports,
         investments,
+        monitor,
+        pairing,
         reports,
         rules,
         settings,
@@ -297,8 +312,13 @@ def create_app(
     app.state.port = port
     app.state.cookie = cookie_name(port)
     app.state.jobs = Jobs()
-    app.state.flashes = []
+    app.state.flashes = {}
     app.state.server = None
+    app.state.devices = DeviceStore()
+    app.state.pairings = Pairings()
+    app.state.lan = None
+    """The home-network address while it is open (``lan.Lan``)."""
+    app.state.lan_server = None
     app.add_middleware(Guard, token=token, port=port, extra_hosts=extra_hosts)
     app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
 
@@ -343,6 +363,10 @@ def create_app(
         message = _("The ledger is busy: a task in the background is writing to it. Try again in a moment.")
         return render(request, "error.html", 503, title=_("That did not work"), message=message)
 
-    for module in (dashboard, transactions, imports, categorize, rules, accounts, reports, debts, investments, settings, history, welcome):
+    modules = (
+        dashboard, transactions, imports, categorize, rules, accounts, reports, debts, investments, settings, devices,
+        pairing, monitor, history, welcome,
+    )
+    for module in modules:
         app.include_router(module.router)
     return app

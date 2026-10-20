@@ -147,7 +147,10 @@
 
   /* ---------------------------------------------------------- charts of the reports */
 
+  /* A chart's numbers: in a data-json attribute (parts of a page that htmx replaces, which leaves out
+     <script> elements), or in the <script type="application/json"> that data-source names. */
   function chartData(element) {
+    if (element.dataset.json) return JSON.parse(element.dataset.json);
     const source = document.getElementById(element.dataset.source || "");
     return source ? JSON.parse(source.textContent) : null;
   }
@@ -312,6 +315,125 @@
     document.querySelectorAll('[data-chart="sankey"]').forEach(sankeyChart);
   }
 
+  /* ---------------------------------------------------------- the wall monitor */
+
+  /* One chart at a time: the panel is replaced every two minutes, so the old chart is let go and the
+     window's listeners (registered once) always reach the current one. */
+  let monitorInstance = null;
+  let monitorDraw = null;
+
+  function monitorChart(element) {
+    if (typeof window.echarts === "undefined") return;
+    const data = chartData(element);
+    if (!data || !data.dates.length) return;
+    if (monitorInstance) monitorInstance.dispose();
+    const chart = window.echarts.init(element, null, { renderer: "svg" });
+    monitorInstance = chart;
+    const label = (v) => (data.percent ? pct(v, 0) : compact(v));
+    const last = data.values.length - 1;
+    monitorDraw = function draw() {
+      const t = tokens();
+      chart.setOption(
+        {
+          animation: false,
+          grid: { left: 4, right: 64, top: 14, bottom: 4, containLabel: true },
+          tooltip: { show: false }, // a screen on the wall has no pointer: the last value is written out
+          xAxis: {
+            type: "category",
+            boundaryGap: false,
+            data: data.dates,
+            axisLine: { lineStyle: { color: t.baseline } },
+            axisTick: { show: false },
+            axisLabel: { color: t.muted, formatter: monthLabel, hideOverlap: true, fontSize: 13 },
+          },
+          yAxis: {
+            type: "value",
+            scale: data.percent, // amounts from zero (the area is the amount); a change in percent fits its range
+            splitNumber: 4,
+            axisLabel: { color: t.muted, formatter: label, fontSize: 13 },
+            splitLine: { lineStyle: { color: t.grid, width: 1 } },
+          },
+          series: [
+            {
+              type: "line",
+              data: data.values.map((v, i) =>
+                i === last && v !== null
+                  ? { value: v, symbol: "circle", symbolSize: 10, itemStyle: { color: t.accent, borderColor: t.surface, borderWidth: 2 } }
+                  : v
+              ),
+              symbol: "none",
+              showSymbol: true,
+              connectNulls: false,
+              lineStyle: { width: 3, color: t.accent, cap: "round", join: "round" },
+              itemStyle: { color: t.accent },
+              areaStyle: data.percent ? undefined : { color: t.accent, opacity: 0.1 },
+              emphasis: { disabled: true },
+              endLabel: {
+                show: true,
+                color: t.ink2,
+                fontSize: 15,
+                formatter: (p) => label(typeof p.value === "object" ? p.value.value : p.value),
+              },
+            },
+          ],
+        },
+        true
+      );
+    };
+    monitorDraw();
+  }
+
+  const shortDay = new Intl.DateTimeFormat(textLocale, { weekday: "short", day: "numeric", month: "short" });
+
+  function days(root) {
+    root.querySelectorAll("[data-day]").forEach((element) => {
+      element.textContent = shortDay.format(parseDay(element.dataset.day));
+    });
+  }
+
+  function monitor() {
+    const clock = document.querySelector("[data-clock]");
+    if (!clock) return;
+    const day = document.querySelector("[data-date]");
+    const time = new Intl.DateTimeFormat(textLocale, { hour: "2-digit", minute: "2-digit" });
+    const date = new Intl.DateTimeFormat(textLocale, { weekday: "long", day: "numeric", month: "long" });
+    days(document);
+    const tick = () => {
+      const now = new Date();
+      clock.textContent = time.format(now);
+      if (day) day.textContent = date.format(now);
+    };
+    tick();
+    window.setInterval(tick, 10000);
+    /* keep the screen on while the page is in front, where the browser allows it */
+    const awake = () => {
+      if (navigator.wakeLock && document.visibilityState === "visible") navigator.wakeLock.request("screen").catch(() => {});
+    };
+    awake();
+    document.addEventListener("visibilitychange", awake);
+    document.querySelectorAll('[data-chart="monitor"]').forEach(monitorChart);
+    window.addEventListener("resize", () => monitorInstance && monitorInstance.resize());
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => monitorDraw && monitorDraw());
+    document.body.addEventListener("htmx:afterSettle", () => {
+      days(document);
+      document.querySelectorAll('[data-chart="monitor"]').forEach((element) => {
+        if (!window.echarts.getInstanceByDom(element)) monitorChart(element);
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------- the menu on a narrow screen */
+
+  function menu() {
+    const button = document.querySelector(".menu-button");
+    const sidebar = document.querySelector(".sidebar");
+    if (!button || !sidebar) return;
+    button.addEventListener("click", () => {
+      const open = sidebar.classList.toggle("open");
+      button.setAttribute("aria-expanded", String(open));
+    });
+  }
+
   /* ---------------------------------------------------------- file drop zone */
 
   function dropzones() {
@@ -344,6 +466,12 @@
     });
   }
 
+  /* A part of a page asked for while this device was removed (or the interface restarted): load the page
+     again, which shows why, instead of keeping what was on the screen. */
+  document.addEventListener("htmx:responseError", (event) => {
+    if (event.detail && event.detail.xhr && event.detail.xhr.status === 401) window.location.reload();
+  });
+
   /* ---------------------------------------------------------- confirmations */
 
   document.addEventListener(
@@ -368,8 +496,10 @@
   });
 
   document.addEventListener("DOMContentLoaded", () => {
+    menu();
     networthChart();
     reportCharts();
+    monitor();
     dropzones();
   });
 })();

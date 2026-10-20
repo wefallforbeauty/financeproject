@@ -1,0 +1,27 @@
+{% extends "base_bare.html" %}
+{% block title %}{{ _("Wall monitor") }}{% endblock %}
+{% block manifest %}<link rel="manifest" href="/static/monitor.webmanifest">{% endblock %}
+{% block scripts %}<script src="/static/vendor/echarts.min.js?v=6.1.0" defer></script>{% endblock %}
+{% block body_class %}monitor-page{% endblock %}
+{% block body %}
+<main class="monitor" id="main">
+  <header class="monitor-head">
+    <div>
+      <div class="monitor-clock" data-clock>{{ updated }}</div>
+      <div class="monitor-date" data-date>{{ today.isoformat() }}</div>
+    </div>
+    <div class="monitor-tools">
+      <form method="post" action="/monitor/guests">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="next" value="/monitor">
+        {% if guests %}
+          {% if can_show %}<input type="hidden" name="guests" value="off"><button class="btn" type="submit">{{ _("Show the amounts") }}</button>{% endif %}
+        {% else %}
+          <input type="hidden" name="guests" value="on"><button class="btn" type="submit">{{ _("Guests are here: hide the amounts") }}</button>
+        {% endif %}
+      </form>
+      {% if can_show %}<a class="btn ghost" href="/">{{ _("Back to the overview") }}</a>{% endif %}
+    </div>
+  </header>
+  {% include "_monitor_panel.html" %}
+</main>
+{% endblock %}

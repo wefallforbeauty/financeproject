@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="{{ lang }}" data-theme="{{ theme }}" data-number-format="{{ number_format }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false, "selfRequestsOnly": true}'>
+<title>{% block title %}financeproject{% endblock %} · financeproject</title>
+<link rel="icon" href="/static/img/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/img/icon-180.png">
+{% block manifest %}<link rel="manifest" href="/static/manifest.webmanifest">{% endblock %}
+<link rel="stylesheet" href="/static/css/app.css?v={{ package_version }}">
+<script src="/static/js/early.js?v={{ package_version }}"></script>
+<script src="/static/vendor/htmx.min.js?v=2.0.11" defer></script>
+{% block scripts %}{% endblock %}
+<script src="/static/js/app.js?v={{ package_version }}" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}" hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
+{% block body %}{% endblock %}
+</body>
+</html>
