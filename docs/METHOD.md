@@ -1,4 +1,4 @@
-# Method (version 04a)
+# Method (version 04b)
 
 This document gives the definition, formula and source of everything the
 program computes. A section is added whenever a new model is.
@@ -438,6 +438,13 @@ Other (five and four for income). Colours follow the role of
 a flow (income, expense, savings), not the category, so the diagram needs no
 legend; every node is labeled with its amount and share of income.
 
+The interface draws the same diagram in the browser. There it also groups the
+categories under 2% of the budget as Other (keeping the three largest and
+never folding a single one), so that each node keeps a label of one line
+without overlapping its neighbours; a label that would still overlap is
+hidden, and on a narrow screen the labels give the names only. The amounts
+are in the pointer's tooltip and in a table under the diagram.
+
 ## 16. Loans: payment plans
 
 The contract states a monthly interest rate $r$. On consumer and vehicle loans
@@ -799,6 +806,17 @@ The same numbers are a table under the chart, and the chart's text
 alternative states the first and last values. The dark theme has its own
 steps of the same blue, checked against the dark background, not an inverted
 light one.
+
+**The report charts.** The income statement's chart puts each month's
+income and expenses side by side on one axis in TRY (grouped bars; a legend
+names the two, the last month's bars carry their values, the pointer shows a
+bar's value first, then its series and month). The categorical colours are
+the first three slots of the reference palette (blue, orange, aqua) in both
+themes, checked for every pair under the common colour-vision deficiencies.
+Aqua on the light background has a contrast of 2.7:1, under the 3:1 asked of
+graphics (WCAG 1.4.11), so the marks in that colour always have a direct label
+and the numbers are in a table too. Every chart has a text alternative and is
+drawn again when the theme changes.
 
 **Languages.** The texts are written in English and looked up in a Turkish
 catalog; one with a count has a singular and a plural form (Turkish uses one
