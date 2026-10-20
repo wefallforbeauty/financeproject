@@ -158,19 +158,19 @@ part of an account name instead of the full path: `Groceries` →
 finance account add "Assets:Bank:Ziraat Checking" --kind checking --institution "Ziraat Bankası" --owner Me
 finance account add "Assets:FX:USD Account" --kind fx --commodity USD
 finance account add "Assets:Gold:Grams" --kind gold                 # unit: XAU_G (24 carat, grams)
-finance account add "Liabilities:Credit Card:Bonus" --kind credit_card
+finance account add "Liabilities:Credit Card:Family Card" --kind credit_card
 finance account add "Expenses:Food:Groceries"
 finance account add "Income:Salary"
 
 # Opening balances (natural sign: a debt is entered as a positive amount owed)
 finance opening "Ziraat Checking" 25000 --date 2026-10-01
-finance opening Bonus 3500 --date 2026-10-01
+finance opening "Family Card" 3500 --date 2026-10-01
 
 # Daily transactions (amounts may be written 1,234.56 or 1.234,56)
 finance income 65000 Salary --to "Ziraat Checking"
-finance expense 450.75 Groceries --from Bonus --payee Migros
-finance expense 36000 Electronics --from Bonus --installments 6   # 6 monthly installments from next month
-finance transfer 3500 --from "Ziraat Checking" --to Bonus             # paying the card
+finance expense 450.75 Groceries --from "Family Card" --payee "Mahalle Marketi"
+finance expense 36000 Electronics --from "Family Card" --installments 6   # 6 monthly installments from next month
+finance transfer 3500 --from "Ziraat Checking" --to "Family Card"     # paying the card
 finance exchange --from "Ziraat Checking" --paid 49126.70 --to "USD Account" --received 1000
 finance txn add --description "Gift" -p "Expenses:Gifts=1500" -p "Ziraat Checking"
 
@@ -233,8 +233,8 @@ Internet banking shows a credit card's transactions ("Kart Hareketleri"); save
 the page as PDF, then:
 
 ```sh
-finance import Kart_Hareketleri.pdf --account Bonus --payments-from "Ziraat Checking" --dry-run
-finance import Kart_Hareketleri.pdf --account Bonus --payments-from "Ziraat Checking"
+finance import Kart_Hareketleri.pdf --account "Family Card" --payments-from "Ziraat Checking" --dry-run
+finance import Kart_Hareketleri.pdf --account "Family Card" --payments-from "Ziraat Checking"
 ```
 
 ```
@@ -266,7 +266,7 @@ The standard layout has these headers, in any order. Example file:
 
 ```
 date,description,amount,account,counter_account,commodity,payee,note
-2026-10-01,MİGROS KONYA,-450.00,Bonus,,,Migros,
+2026-10-01,MAHALLE MARKETİ,-450.00,Family Card,,,Mahalle Marketi,
 2026-10-02,Salary,"65,000.00",Ziraat Checking,Income:Salary,,,
 ```
 
@@ -291,8 +291,8 @@ sure), or `Expenses:Uncategorized` / `Income:Uncategorized`. Installment lines
 of defined loans go to the loan.
 
 ```sh
-finance rule add migros Groceries                  # "migros" in the description → Expenses:Food:Groceries
-finance rule add "kahve\s+dunyasi" Coffee --regex
+finance rule add "mahalle market" Groceries        # "mahalle market" in the description → Expenses:Food:Groceries
+finance rule add "kose\s+kahveci" Coffee --regex
 finance categorize --dry-run                       # rules, then the model, on uncategorized transactions
 finance categorize
 finance categorize --evaluate                      # how well would the model have done so far?
@@ -324,7 +324,7 @@ finance loan pay "Car loan" --from "Ziraat Checking"                      # the 
 finance loan pay "Car loan" --from "Ziraat Checking" --amount 20000 --extra  # an early repayment
 
 finance debt                                        # every debt, and the installments left in today's money
-finance payoff --budget 15000 --rate "Bonus=3.5" --minimum "Bonus=3000"   # avalanche or snowball
+finance payoff --budget 15000 --rate "Family Card=3.5" --minimum "Family Card=3000"   # avalanche or snowball
 finance apr --amount 10000 --count 12 --installment 888.49 --last 888.47 --fees 50
 finance cash-or-installments --cash 34000 --installment 6000 --count 6 --rate 2.5
 ```

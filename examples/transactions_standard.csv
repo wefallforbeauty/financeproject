@@ -1,8 +1,8 @@
 date,description,amount,account,counter_account,commodity,payee,note
-2026-10-01,MİGROS KONYA,-450.00,Liabilities:Credit Card:Bonus,,,Migros,
+2026-10-01,MAHALLE MARKETİ,-450.00,Liabilities:Credit Card:Family Card,,,Mahalle Marketi,
 2026-10-02,October salary,"65,000.00",Assets:Bank:Checking,Income:Salary,,Employer,
 2026-10-03,Rent,"-25,000.00",Assets:Bank:Checking,Expenses:Rent,,Landlord,
-2026-10-05,Credit card payment,-450.00,Assets:Bank:Checking,Liabilities:Credit Card:Bonus,,,
-2026-10-06,KAHVE DÜNYASI,-95.50,Liabilities:Credit Card:Bonus,,,,
-2026-10-06,KAHVE DÜNYASI,-95.50,Liabilities:Credit Card:Bonus,,,,second coffee the same day
+2026-10-05,Credit card payment,-450.00,Assets:Bank:Checking,Liabilities:Credit Card:Family Card,,,
+2026-10-06,KÖŞE KAHVECİSİ,-95.50,Liabilities:Credit Card:Family Card,,,,
+2026-10-06,KÖŞE KAHVECİSİ,-95.50,Liabilities:Credit Card:Family Card,,,,second coffee the same day
 2026-10-07,Electricity bill,"-1,240.35",Assets:Bank:Checking,Expenses:Bills:Electricity,,,
