@@ -13,6 +13,7 @@ from starlette.background import BackgroundTask
 from financeproject import config
 from financeproject.core.dates import add_months, month_start
 from financeproject.core.money import set_number_format
+from financeproject.errors import FinanceError
 from financeproject.ledger.db import backup, make_engine, session_scope
 from financeproject.ledger.models import Price
 from financeproject.web.app import (
@@ -25,6 +26,7 @@ from financeproject.web.app import (
     render,
 )
 from financeproject.web.devices import MONITOR
+from financeproject.web.forms import day_value, optional
 from financeproject.web.i18n import LANGUAGES, translator
 from financeproject.web.views.devices import TABS, guests_on, seen_text
 
@@ -120,7 +122,7 @@ def download_backup(request: Request, name: str):
     return FileResponse(match, filename=match.name, media_type="application/vnd.sqlite3")
 
 
-def _update_prices(path):
+def _update_prices(path, first: date | None = None):
     def task(progress) -> str:
         from financeproject.prices.http import make_client
         from financeproject.prices.update import update_all, update_range
@@ -129,7 +131,7 @@ def _update_prices(path):
         engine = make_engine(path)
         try:
             with session_scope(engine) as s, make_client() as client:
-                start, end = update_range(s, None, None, today)
+                start, end = update_range(s, first, None, today)
                 report = update_all(s, client, start, end, api_key=config.evds_api_key(), today=today, progress=progress)
         finally:
             engine.dispose()
@@ -140,12 +142,20 @@ def _update_prices(path):
 
 
 @router.post("/settings/prices")
-def update_prices(request: Request):
+async def update_prices(request: Request):
     _ = translator(config.language())
     state = request.app.state
     if not state.ledger.exists:
         return redirect("/welcome")
-    state.jobs.start(_("Updating prices"), _update_prices(state.ledger.path))
+    typed = optional(str((await request.form()).get("start") or ""))
+    try:
+        first = day_value(typed, "first day") if typed else None
+        if first is not None and not date(2005, 1, 1) <= first <= date.today():
+            raise FinanceError("The first day is between 2005 and today.")
+    except FinanceError as exc:
+        flash(request, "error", str(exc))
+        return redirect("/settings#prices")
+    state.jobs.start(_("Updating prices"), _update_prices(state.ledger.path, first))
     return redirect("/settings#prices")
 
 

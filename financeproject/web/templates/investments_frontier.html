@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Portfolios") }}{% endblock %}
+{% block scripts %}<script src="/static/vendor/echarts.min.js?v=6.1.0" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Investments") }}</h1><p>{{ _("Other ways to weigh what you hold: equal weights, least risk, best return for its risk, hierarchical risk parity, and how much each depends on the sample. A description of the past, not advice.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Investments")) }}
+<form class="filters compact stack" method="get" action="/investments/frontier">
+  <div class="filters compact">
+    {% include "_theory_filters.html" %}
+    <button class="btn" type="submit">{{ _("Show") }}</button>
+  </div>
+  {% include "_portfolio.html" %}
+</form>
+{{ error_box(error) }}
+{% if report %}
+{% include "_theory_sample.html" %}
+<article class="card mb">
+  <div class="card-head"><h2>{{ _("Risk and return above cash") }}</h2></div>
+  <ul class="chart-key" aria-hidden="true">
+    <li><i class="key line"></i>{{ _("Efficient frontier") }}</li>
+    <li><i class="key ring"></i>{{ _("Holdings") }}</li>
+    <li><i class="key diamond"></i>{{ _("Portfolios") }}</li>
+    <li><i class="key square"></i>{{ _("What you hold now") }}</li>
+  </ul>
+  <div class="chart tall" data-chart="frontier" data-source="frontier-data" role="img" aria-label="{{ chart.summary }}"></div>
+  <script type="application/json" id="frontier-data">{{ chart|tojson }}</script>
+  <p class="chart-note">{{ _("Right: more risk. Up: more return than cash. The line is the most return each level of risk allowed in this window; a point's ratio is its height over its distance from the left.") }}</p>
+</article>
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Holdings") }}</h2><span class="sub">{{ _("Cash returned {rate} a year in the window", rate=percent(report.cash_grew, 1)) }}</span></div>
+  <div class="table-wrap">
+  <table class="data wrap-head">
+    <thead><tr><th>{{ _("Holding") }}</th><th class="num wide-only">{{ _("Value (TRY)") }}</th><th class="num wide-only">{{ _("Share now") }}</th><th class="num wide-only">{{ _("A year, in the window") }}</th><th class="num">{{ _("Above cash a year") }}</th><th class="num wide-only">{{ _("90% range") }}</th><th class="num">{{ _("Volatility") }}</th><th class="num">{{ _("Ratio") }}</th></tr></thead>
+    <tbody>
+    {% for a in report.assets %}
+      <tr><td>{{ a.code }}</td><td class="num wide-only">{{ money(a.value, 0) }}</td><td class="num wide-only">{{ percent(a.weight, 1) }}</td><td class="num wide-only">{{ percent(a.grew, 1, sign=True) }}</td>
+        <td class="num">{{ percent(a.excess, 1, sign=True) }}<span class="sub narrow-only">{{ percent(a.low, 0, sign=True) }} … {{ percent(a.high, 0, sign=True) }}</span></td><td class="num sub wide-only">{{ percent(a.low, 0, sign=True) }} … {{ percent(a.high, 0, sign=True) }}</td>
+        <td class="num">{{ percent(a.volatility, 1) }}</td><td class="num">{{ money(a.sharpe, 2) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="pager">{{ _("The range: where the mean return above cash lies with 90% confidence, given how much the returns vary. A range that spans zero says the window cannot tell whether the holding beats cash.") }}</p>
+</article>
+<article class="card flush mb">
+  <div class="card-head"><h2>{{ _("Portfolios") }}</h2>{% if report.draws %}<span class="sub">{{ _("under each weight: its range over {n} resampled histories", n=report.draws) }}</span>{% endif %}</div>
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>{{ _("Portfolio") }}</th>{% for code in sample.codes %}<th class="num">{{ code }}</th>{% endfor %}<th class="num">{{ _("Above cash a year") }}</th><th class="num">{{ _("Volatility") }}</th><th class="num">{{ _("Ratio") }}</th></tr></thead>
+    <tbody>
+    {% for p in report.portfolios %}
+      <tr><td><span class="desc">{{ _(labels[p.key])|replace("1/N", "1/\u2060N") }}</span></td>
+        {% for w in p.weights %}<td class="num">{{ percent(w, 0) }}{% if p.low is not none %}<span class="sub block">{{ percent(p.low[loop.index0], 0) }} … {{ percent(p.high[loop.index0], 0) }}</span>{% endif %}</td>{% endfor %}
+        <td class="num">{{ percent(p.excess, 1, sign=True) }}</td><td class="num">{{ percent(p.volatility, 1) }}</td><td class="num">{{ money(p.sharpe, 2) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if not best %}<p class="pager">{{ _("No best return for its risk: no holding earned more than cash in the window.") }}</p>{% endif %}
+</article>
+<div class="grid two">
+  <article class="card">
+    <h2>{{ _("How to read it") }}</h2>
+    <p class="small muted">{{ _("Least risk and hierarchical risk parity use only how the holdings move; best return for its risk also uses their mean returns, which a few years cannot pin down. The ranges under the weights show it: the periods are drawn again with replacement and each portfolio is chosen again; the 5th to 95th percentile of each weight is shown. A wide range says the portfolio is mostly the sample's noise.") }}</p>
+    <p class="small muted">{{ _("A ratio below zero says little: when less than cash was earned, less risk makes the ratio worse, not better. Read the return above cash then.") }}</p>
+    <p class="small muted">{{ _("Weights are never negative (no short selling) and add up to 100%.") }}</p>
+  </article>
+  <article class="card">
+    <h2>{{ _("Notes") }}</h2>
+    <p class="small muted">{% if report.shrinkage is not none %}{{ _("Covariance: the correlations are shrunk towards their average by {share} (Ledoit-Wolf).", share=percent(report.shrinkage, 0)) }}{% else %}{{ _("Covariance: of the sample, as it is.") }}{% endif %} {{ _("Similar holdings, as the tree orders them: {names}.", names=report.order|join(", ")) }}</p>
+    <p class="small muted">{{ _("Share prices leave out dividends. A managed exchange rate looks calm until it moves: volatility measures the window, not what can happen.") }}</p>
+    <p class="small muted">{{ _("The policy rate stands in for what lira cash could earn. Deposits have paid more and less than it; give your own rate above to compare.") }}</p>
+  </article>
+</div>
+{% endif %}
+{% endblock %}

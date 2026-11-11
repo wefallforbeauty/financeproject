@@ -22,13 +22,15 @@
 
   <article class="card" id="prices">
     <h2>{{ _("Prices") }}</h2>
-    <p class="small muted">{{ _("Exchange rates (TCMB), gold, the CPI, fund prices (TEFAS) and share prices (Yahoo Finance). Only fund and share codes are sent.") }}</p>
+    <p class="small muted">{{ _("Exchange rates (TCMB), gold, the CPI, the policy rate, fund prices (TEFAS) and share prices (Yahoo Finance). Only fund and share codes are sent.") }}</p>
     {% if price_dates %}
     <ul class="list small">{% for source, last in price_dates %}<li><span>{{ source }}</span><span class="num">{{ last.isoformat() }}</span></li>{% endfor %}</ul>
     {% else %}<p class="muted">{{ _("No prices yet.") }}</p>{% endif %}
-    <form method="post" action="/settings/prices" class="mt">
+    <form method="post" action="/settings/prices" class="form mt">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <button class="btn primary" type="submit" {% if job and job.running %}disabled{% endif %}>{{ _("Update prices now") }}</button>
+      <label class="field"><span>{{ _("From (optional)") }}</span><input type="date" name="start" min="2005-01-01">
+        <span class="hint">{{ _("Empty: from the first transaction. An earlier day gets older prices, which the portfolio pages use.") }}</span></label>
+      <div class="actions"><button class="btn primary" type="submit" {% if job and job.running %}disabled{% endif %}>{{ _("Update prices now") }}</button></div>
     </form>
     {% include "_job.html" %}
   </article>

@@ -367,7 +367,12 @@ def create_demo_ledger(
     from financeproject.errors import FinanceError
     from financeproject.ledger.db import init_db, make_engine, session_scope
     from financeproject.prices.http import make_client
-    from financeproject.prices.update import load_bundled_cpi, update_fx, update_gold
+    from financeproject.prices.update import (
+        load_bundled_cpi,
+        update_fx,
+        update_gold,
+        update_rates,
+    )
     from financeproject.reports.context import load_market_data
 
     path = Path(path)
@@ -389,6 +394,7 @@ def create_demo_ledger(
                     with make_client() as client:
                         update_fx(s, client, start - timedelta(days=7), end, ["USD"], api_key, pause=0.1, progress=progress)
                         update_gold(s, client, start - timedelta(days=7), end, progress=progress)
+                        update_rates(s, client)  # the policy rate; without it the copy shipped with the package serves
                     source = "TCMB + Frankfurter"
                 except (httpx.HTTPError, FinanceError) as exc:
                     warning = f"Download failed ({exc}); made-up prices were used."

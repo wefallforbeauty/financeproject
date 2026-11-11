@@ -231,8 +231,23 @@ class Price(Base):
     fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
 
+class StockSplit(Base):
+    """A split or bonus issue of a share as its price source reports it: from ``date`` on, one old
+    share is ``ratio`` new ones. Independent of what the ledger held (``finance split`` records that)."""
+
+    __tablename__ = "stock_splits"
+    __table_args__ = (UniqueConstraint("commodity_code", "date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    commodity_code: Mapped[str] = mapped_column(ForeignKey("commodities.code"), index=True)
+    date: Mapped[dt.date] = mapped_column(Date)
+    ratio: Mapped[Decimal] = mapped_column(DecimalText(48))
+    source: Mapped[str] = mapped_column(String(40))
+
+
 class IndexValue(Base):
-    """Monthly index level, e.g. the CPI (``series="CPI"``)."""
+    """A value of a named series from a day on: the CPI's monthly level (``series="CPI"``, the first
+    day of the month), the policy rate (``series="POLICY_RATE"``, the day it took effect)."""
 
     __tablename__ = "index_values"
     __table_args__ = (UniqueConstraint("series", "period"),)

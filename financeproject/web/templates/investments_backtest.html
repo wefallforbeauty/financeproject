@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_macros.html" import subtabs, error_box with context %}
+{% block title %}{{ _("Out of sample") }}{% endblock %}
+{% block scripts %}<script src="/static/vendor/echarts.min.js?v=6.1.0" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>{{ _("Investments") }}</h1><p>{{ _("Each portfolio is chosen from the past only, held, and chosen again: how it did afterwards, against simply holding equal weights. A description of the past, not advice.") }}</p></div></header>
+{{ subtabs(tabs, tab, _("Investments")) }}
+<form class="filters compact stack" method="get" action="/investments/backtest">
+  <div class="filters compact">
+    {% include "_theory_filters.html" %}
+    <label class="field" title="{{ _('Empty: 52 weeks, 250 days or 36 months, or half the history when that is shorter.') }}"><span>{{ _("Window (periods)") }}</span><input type="number" min="10" max="2000" name="window" value="{{ form.window }}" placeholder="{{ _('automatic') }}"></label>
+    <label class="field" title="{{ _('Empty: about a month.') }}"><span>{{ _("Held for (periods)") }}</span><input type="number" min="1" max="260" name="step" value="{{ form.step }}" placeholder="{{ _('automatic') }}"></label>
+    <button class="btn" type="submit">{{ _("Show") }}</button>
+  </div>
+  {% include "_portfolio.html" %}
+</form>
+{{ error_box(error) }}
+{% if report %}
+{% include "_theory_sample.html" %}
+<p class="muted small">{{ _("Chosen from the {window} periods before, held for {step}, from {first} to {last} ({n} periods). Cash returned {rate} a year.", window=report.window, step=report.step, first=report.days[0].isoformat(), last=report.days[-1].isoformat(), n=report.tested, rate=percent(report.cash_grew, 1)) }}</p>
+<article class="card flush mb">
+  <div class="table-wrap">
+  <table class="data wrap-head">
+    <thead><tr><th>{{ _("Portfolio") }}</th><th class="num">{{ _("A year") }}</th><th class="num wide-only">{{ _("Above cash") }}</th><th class="num wide-only">{{ _("Volatility") }}</th><th class="num">{{ _("Ratio") }}</th><th class="num wide-only">{{ _("Largest fall") }}</th><th class="num wide-only">{{ _("Traded each time") }}</th><th class="num">{{ _("Against 1/N") }}</th><th class="num wide-only">p</th></tr></thead>
+    <tbody>
+    {% for line in report.lines %}
+      <tr><td><span class="desc">{{ _(labels[line.key])|replace("1/N", "1/\u2060N") }}</span></td><td class="num">{{ percent(line.grew, 1, sign=True) }}</td><td class="num wide-only">{{ percent(line.excess, 1, sign=True) }}</td>
+        <td class="num wide-only">{{ percent(line.volatility, 1) }}</td><td class="num">{{ money(line.sharpe, 2) }}</td><td class="num wide-only">{{ percent(line.drawdown, 1) }}</td>
+        <td class="num wide-only">{{ percent(line.turnover, 1) }}</td><td class="num">{{ "" if line.key == "equal" else percent(line.ahead[-1], 1, sign=True) }}</td><td class="num wide-only">{{ money(line.p_value, 2) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if fallbacks %}<p class="pager">{{ _.n("Best return for its risk: at {n} choice nothing had beaten cash, and least risk was held instead.", "Best return for its risk: at {n} choices nothing had beaten cash, and least risk was held instead.", fallbacks) }}</p>{% endif %}
+</article>
+<h2 class="section-title">{{ _("Ahead of or behind equal weights") }}</h2>
+<section class="grid two">
+  {% for line, panel in panels %}
+  <article class="card">
+    <h3>{{ _(labels[line.key]) }}</h3>
+    <div class="chart small" data-chart="ahead" data-json='{{ panel|tojson }}' role="img" aria-label="{{ panel.summary }}"></div>
+  </article>
+  {% endfor %}
+</section>
+<div class="grid two">
+  <article class="card">
+    <h2>{{ _("How to read it") }}</h2>
+    <p class="small muted">{{ _("Against 1/N: the portfolio's growth over that of equal weights; above the line it is ahead. p: the chance of a difference in the ratios at least this large if the two were equally good (Jobson-Korkie, Memmel). Under 0.05 is rare in a history this short: equal weights are hard to beat out of sample.") }}</p>
+    <p class="small muted">{{ _("A ratio below zero says little: when less than cash was earned, less risk makes the ratio worse, not better. Read the return above cash then.") }}</p>
+  </article>
+  <article class="card">
+    <h2>{{ _("Notes") }}</h2>
+    <p class="small muted">{{ _("Traded each time: the share of the portfolio sold and bought again at a choice. Trading costs and the tax on gains are not counted; a portfolio that trades much would lose more to them.") }}</p>
+    <p class="small muted">{{ _("What you hold now keeps today's shares all along. If they came about by letting what rose grow, the past flatters them.") }}</p>
+    <p class="small muted">{{ _("The policy rate stands in for what lira cash could earn. Deposits have paid more and less than it; give your own rate above to compare.") }}</p>
+  </article>
+</div>
+{% endif %}
+{% endblock %}

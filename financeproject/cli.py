@@ -1065,10 +1065,10 @@ def price_update(
     ctx: typer.Context,
     start: Annotated[Optional[str], typer.Option(help="Default: the first transaction date (or 30 days ago)")] = None,
     end: Annotated[Optional[str], typer.Option(help="Default: today")] = None,
-    only: Annotated[Optional[str], typer.Option(help="fx, gold, cpi, tefas or yahoo")] = None,
+    only: Annotated[Optional[str], typer.Option(help="fx, gold, cpi, rates, tefas or yahoo")] = None,
 ) -> None:
-    """Download TCMB exchange rates, gold (Frankfurter), the CPI, fund prices (TEFAS) and share prices
-    (Yahoo Finance); fills in missing days."""
+    """Download TCMB exchange rates, gold (Frankfurter), the CPI, the TCMB policy rate, fund prices (TEFAS) and
+    share prices (Yahoo Finance); fills in missing days."""
     from financeproject.prices.http import make_client
     from financeproject.prices.update import SOURCES, update_all, update_range
 
@@ -2529,6 +2529,11 @@ def returns(
     missing = [u for u in UNITS if u not in {r.name for r in report.units}]
     if missing:
         console.print(f"[yellow]Not shown: {', '.join(missing)} (no price for every day; run 'finance price update').[/]")
+    if report.cash:
+        console.print(
+            f"Cash over the same days (TRY at the TCMB policy rate, before tax): {_pct(report.cash.total, 2)}"
+            f" ({_pct(report.cash.year, 2)} a year)"
+        )
     if report.days < 365:
         console.print("[dim]'a year' extends a period shorter than a year; read it with care.[/]")
     if report.cpi_extrapolated:
@@ -2669,6 +2674,159 @@ def concentration(
                       "insurance is shared by its holders; the ledger counts it for its owner (or 'shared').[/]")
     if report.missing:
         console.print(f"[yellow]Left out (no price): {', '.join(escape(m) for m in report.missing)}[/]")
+
+
+# --------------------------------------------------------------------------- 05: portfolio theory
+
+FrequencyOption = Annotated[str, typer.Option(help="Returns of each: weekly (default), daily or monthly")]
+RiskFreeOption = Annotated[
+    Optional[str], typer.Option("--risk-free", help="What cash earns, % a year (default: the TCMB policy rate of each day)")
+]
+CovarianceOption = Annotated[str, typer.Option(help="shrunk (Ledoit-Wolf, default) or sample")]
+
+
+def _sample_lines(sample, what: str) -> None:
+    console.print(
+        f"[bold]{what}[/] · {sample.start} – {sample.end} · {len(sample.days) - 1} {sample.frequency} returns of "
+        f"{len(sample.codes)} holdings"
+    )
+    _print_accounts(sample.accounts)
+    rate = f"given: {_pct(sample.cash_now, 2)} a year" if sample.rate_source == "given" else (
+        f"TRY at the TCMB policy rate, now {_pct(sample.cash_now, 1)} a year compounded (rate of {sample.rate_from}"
+        + (", the copy shipped with the program; run 'finance price update'" if sample.rate_source == "bundled" else "")
+        + ")"
+    )
+    console.print(f"[dim]Cash: {rate}[/]")
+    if sample.limited_by:
+        console.print(
+            f"[dim]The window starts where the prices of {escape(sample.limited_by)} begin; older prices: "
+            "finance price update --start YYYY-MM-DD[/]"
+        )
+    if sample.cash_like:
+        console.print(f"[dim]Counted as cash (they barely move against it): {', '.join(escape(c) for c in sample.cash_like)}[/]")
+    if sample.unpriced:
+        console.print(f"[yellow]Left out (no price): {', '.join(escape(c) for c in sample.unpriced)}[/]")
+    if sample.sparse:
+        console.print(
+            f"[yellow]Left out (too few prices for {sample.frequency} returns): {', '.join(escape(c) for c in sample.sparse)}[/]"
+        )
+    for code, on, r in sample.jumps[:5]:
+        console.print(
+            f"[yellow]{escape(code)} moved {_pct(r, 0)} in the period to {on}: a split nobody recorded? "
+            "Update its prices, or the figures below are off.[/]"
+        )
+
+
+def _risk_free(text: str | None) -> float | None:
+    return None if text is None else float(_percent(text, "--risk-free") * 100)
+
+
+@app.command()
+@guarded
+def frontier(
+    ctx: typer.Context,
+    start: Annotated[Optional[str], typer.Option(help="First day (default: as far back as every holding has prices, at most 3 years)")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last day (default: today)")] = None,
+    account: PortfolioOption = None,
+    frequency: FrequencyOption = "weekly",
+    risk_free: RiskFreeOption = None,
+    covariance: CovarianceOption = "shrunk",
+    draws: Annotated[int, typer.Option(help="Resampled histories behind the ranges of the weights (0: none)")] = 200,
+) -> None:
+    """Portfolios of the holdings: yours, equal weights, least risk, best return for its risk and hierarchical
+    risk parity, with the efficient frontier and how much the weights depend on the sample. Not advice."""
+    from financeproject.reports.portfolio import LABELS, frontier_report
+
+    if not 0 <= draws <= 2000:
+        raise FinanceError("--draws is between 0 and 2000.")
+    with ledger(ctx) as s:
+        report = frontier_report(
+            s, start=parse_date(start) if start else None, end=parse_date(end) if end else None, paths=account,
+            frequency=frequency, risk_free=_risk_free(risk_free), method=covariance, draws=draws,
+        )
+    sample = report.sample
+    _sample_lines(sample, "Portfolios of the holdings")
+    t = table("Holding", "Value TRY>", "Share now>", "A year, in the window>", "Above cash a year>", "90 % range>", "Volatility>", "Ratio>")
+    for a in report.assets:
+        t.add_row(
+            escape(a.code), money(a.value, 0), _pct(a.weight, 1), _pct(a.grew, 1), _pct(a.excess, 1),
+            f"{_pct(a.low, 0)} … {_pct(a.high, 0)}", _pct(a.volatility, 1), "—" if a.sharpe is None else f"{a.sharpe:.2f}",
+        )
+    console.print(t)
+    console.print(f"[dim]Cash returned {_pct(report.cash_grew, 1)} a year in the window.[/]")
+    t = table("Portfolio", *(f"{escape(c)}>" for c in sample.codes), "Above cash a year>", "Volatility>", "Ratio>")
+    for p in report.portfolios:
+        t.add_row(
+            LABELS[p.key], *(_pct(w, 0) for w in p.weights), _pct(p.excess, 1), _pct(p.volatility, 1),
+            "—" if p.sharpe is None else f"{p.sharpe:.2f}",
+        )
+    console.print(t)
+    if report.portfolio("max_sharpe") is None:
+        console.print("[dim]No best return for its risk: no holding earned more than cash in the window.[/]")
+    ranged = [p for p in report.portfolios if p.low is not None]
+    if ranged:
+        t = table(f"Weights over {report.draws} resampled histories", *(f"{escape(c)}>" for c in sample.codes))
+        for p in ranged:
+            t.add_row(LABELS[p.key], *(f"{_pct(lo, 0)} … {_pct(hi, 0)}" for lo, hi in zip(p.low, p.high)))
+        console.print(t)
+    shown = report.frontier[:: max(1, len(report.frontier) // 6)]
+    console.print(
+        "Efficient frontier (volatility → above cash a year): "
+        + ", ".join(f"{_pct(v, 1)} → {_pct(x, 1)}" for v, x in [*shown[:6], report.frontier[-1]])
+    )
+    how = f"with the correlations shrunk towards their average by {_pct(report.shrinkage, 0)} (Ledoit-Wolf)" if report.shrinkage is not None else "of the sample"
+    console.print(
+        f"[dim]Returns are measured above cash; the ratio is return above cash over volatility (Sharpe). Covariance {how}. "
+        "The ranges: the periods drawn again with replacement, the portfolios chosen again (5th to 95th percentile). "
+        "A wide range says the portfolio is mostly the sample's noise. A ratio below zero says little: when less than "
+        "cash was earned, less risk makes it worse, not better. This describes the past; it is not advice.[/]"
+    )
+
+
+@app.command()
+@guarded
+def backtest(
+    ctx: typer.Context,
+    start: Annotated[Optional[str], typer.Option(help="First day (default: as far back as every holding has prices, at most 3 years)")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last day (default: today)")] = None,
+    account: PortfolioOption = None,
+    frequency: FrequencyOption = "weekly",
+    risk_free: RiskFreeOption = None,
+    covariance: CovarianceOption = "shrunk",
+    window: Annotated[Optional[int], typer.Option(help="Periods behind each choice (default: 52 weeks, 250 days or 36 months; at most half the history)")] = None,
+    step: Annotated[Optional[int], typer.Option(help="Periods between rebalancings (default: about a month)")] = None,
+) -> None:
+    """Out of sample: each portfolio chosen from the past only, held, chosen again; how it did against equal weights."""
+    from financeproject.reports.portfolio import LABELS, walk_report
+
+    with ledger(ctx) as s:
+        report = walk_report(
+            s, start=parse_date(start) if start else None, end=parse_date(end) if end else None, paths=account,
+            frequency=frequency, risk_free=_risk_free(risk_free), method=covariance, window=window, step=step,
+        )
+    _sample_lines(report.sample, "Out of sample")
+    console.print(
+        f"Chosen from the {report.window} periods before, held for {report.step}, from {report.days[0]} to "
+        f"{report.days[-1]} ({report.tested} periods). Cash returned {_pct(report.cash_grew, 1)} a year."
+    )
+    t = table("Portfolio", "A year>", "Above cash>", "Volatility>", "Ratio>", "Largest fall>", "Traded each time>", "Against 1/N>", "p>")
+    for line in report.lines:
+        t.add_row(
+            LABELS[line.key], _pct(line.grew, 1), _pct(line.excess, 1), _pct(line.volatility, 1),
+            "—" if line.sharpe is None else f"{line.sharpe:.2f}", _pct(line.drawdown, 1), _pct(line.turnover, 1),
+            "" if line.key == "equal" else _pct(line.ahead[-1], 1), "—" if line.p_value is None else f"{line.p_value:.2f}",
+        )
+    console.print(t)
+    fallbacks = next((line.fallbacks for line in report.lines if line.key == "max_sharpe"), 0)
+    if fallbacks:
+        console.print(f"[dim]Best return for its risk: at {fallbacks} of the rebalancings nothing had beaten cash, and least risk was held instead.[/]")
+    console.print(
+        "[dim]Against 1/N: its growth over that of equal weights. p: the chance of a difference in the ratios at "
+        "least this large if the two were equally good (Jobson-Korkie, Memmel); under 0.05 is rare in a history this "
+        "short. A ratio below zero says little: when less than cash was earned, less risk makes it worse, not better. "
+        "Traded: the share of the portfolio sold and bought again at a rebalancing; costs and taxes are not counted. "
+        "This describes the past; it is not advice.[/]"
+    )
 
 
 def main() -> None:

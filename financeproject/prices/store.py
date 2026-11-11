@@ -14,11 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from financeproject.core.prices import PriceBook, Quote
-from financeproject.ledger.models import IndexValue, Price
+from financeproject.core.rates import RateSteps
+from financeproject.ledger.models import IndexValue, Price, StockSplit
 
 MANUAL = "manual"
 CPI = "CPI"
-CPI_SOURCE_PRIORITY = {"evds": 3, "tcmb-table": 2, "bundled": 1}
+POLICY_RATE = "POLICY_RATE"
+BUNDLED_RATES = "policy_rate_tcmb.csv"
+CPI_SOURCE_PRIORITY = {"evds": 3, "tcmb-table": 2, "tcmb-rates": 2, "bundled": 1}
 
 ADDED, UPDATED, SAME, KEPT = "added", "updated", "unchanged", "kept"
 
@@ -89,3 +92,39 @@ def index_sources(session: Session, series: str = CPI) -> dict[str, int]:
         select(IndexValue.source, func.count()).where(IndexValue.series == series).group_by(IndexValue.source)
     )
     return dict(rows.all())
+
+
+def bundled_rates() -> dict[date, float]:
+    """The policy rate snapshot shipped with the package."""
+    import csv
+    from importlib import resources
+
+    text = resources.files("financeproject.data").joinpath(BUNDLED_RATES).read_text(encoding="utf-8")
+    return {date.fromisoformat(row["from"]): float(row["rate_pct"]) for row in csv.DictReader(text.splitlines())}
+
+
+def load_rates(session: Session) -> tuple[RateSteps, str]:
+    """The policy rate steps and where the latest come from: the snapshot shipped with the package,
+    with the ledger's own (``finance price update``) on top."""
+    steps = bundled_rates()
+    stored = load_index(session, POLICY_RATE)
+    steps.update({day: float(rate) for day, rate in stored.items()})
+    return RateSteps(steps), "tcmb-rates" if stored else "bundled"
+
+
+def upsert_split(session: Session, commodity: str, on: date, ratio: Decimal, source: str) -> str:
+    existing = session.scalar(select(StockSplit).where(StockSplit.commodity_code == commodity, StockSplit.date == on))
+    if existing is None:
+        session.add(StockSplit(commodity_code=commodity, date=on, ratio=ratio, source=source))
+        return ADDED
+    if existing.ratio == ratio:
+        return SAME
+    existing.ratio, existing.source = ratio, source
+    return UPDATED
+
+
+def stored_splits(session: Session, commodity: str) -> list[tuple[date, float]]:
+    rows = session.execute(
+        select(StockSplit.date, StockSplit.ratio).where(StockSplit.commodity_code == commodity).order_by(StockSplit.date)
+    )
+    return [(on, float(ratio)) for on, ratio in rows]

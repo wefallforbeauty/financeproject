@@ -1,0 +1,11 @@
+<p class="muted small">{{ sample.start.isoformat() }} – {{ sample.end.isoformat() }} · {{ _.n("{n} return of each holding", "{n} returns of each holding", sample.days|length - 1) }} · {{ sample.accounts|map("short")|join(", ") }}</p>
+<p class="muted small">{% if sample.rate_source == "given" %}{{ _("Cash: {rate} a year, as given.", rate=percent(sample.cash_now, 2)) }}{% else %}{{ _("Cash: Turkish lira at the TCMB policy rate, now {rate} a year compounded (the rate of {day}), before tax.", rate=percent(sample.cash_now, 1), day=sample.rate_from.isoformat()) }}{% if sample.rate_source == "bundled" %} {{ _("This is the copy shipped with the program; update the prices in Settings for the latest.") }}{% endif %}{% endif %}</p>
+{% if sample.limited_by or sample.cash_like or sample.unpriced or sample.sparse or sample.jumps %}
+<div class="alerts">
+  {% if sample.limited_by %}<div class="alert info"><span class="icon" aria-hidden="true">i</span><div class="text">{{ _("The window starts where the prices of {name} begin. Older prices: Settings, Prices, with an earlier day in the From field.", name=sample.limited_by) }}</div></div>{% endif %}
+  {% if sample.cash_like %}<div class="alert info"><span class="icon" aria-hidden="true">i</span><div class="text">{{ _("Counted as cash, because they barely move against it: {names}.", names=sample.cash_like|join(", ")) }}</div></div>{% endif %}
+  {% if sample.unpriced %}<div class="alert warning"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _("Left out (no price): {items}", items=sample.unpriced|join(", ")) }}</div></div>{% endif %}
+  {% if sample.sparse %}<div class="alert warning"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _("Left out, because their prices are too few for returns this often: {names}. A holding priced now and then would look calmer than it is.", names=sample.sparse|join(", ")) }}</div></div>{% endif %}
+  {% for code, on, r in sample.jumps[:5] %}<div class="alert warning"><span class="icon" aria-hidden="true">!</span><div class="text">{{ _("{name} moved {change} in the period to {day}: a split nobody recorded? Update its prices, or the figures are off.", name=code, change=percent(r, 0, sign=True), day=on.isoformat()) }}</div></div>{% endfor %}
+</div>
+{% endif %}
