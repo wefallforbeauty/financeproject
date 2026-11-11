@@ -2,7 +2,8 @@
 
 Which data come from where, why that source was chosen, and what to watch
 out for. Prices and the CPI as of 2026-10-09, bank statements as of
-2026-10-12, fund and share prices and card lists as of 2026-10-17.
+2026-10-12, fund and share prices and card lists as of 2026-10-17, the policy
+rate as of 2026-11-10.
 
 ## In use
 
@@ -14,6 +15,8 @@ out for. Prices and the CPI as of 2026-10-09, bank statements as of
 | CPI (index) | TCMB EVDS3 `TP.TUKFIY2025.GENEL` (2025=100) | needed (free) | monthly | `prices/evds.py` |
 | CPI (changes) | TCMB "Tüketici Fiyatları" (consumer prices) page | not needed | monthly | `prices/tcmb_cpi.py` |
 | CPI (copy) | The same table, shipped with the package | — | up to 2026-09 | `financeproject/data/` |
+| Policy rate | TCMB "1 Hafta Repo" (one-week repo) page | not needed | when the rate changes | `prices/tcmb_rates.py` |
+| Policy rate (copy) | The same table, shipped with the package | — | up to 2026-10-23 | `financeproject/data/` |
 | Fund prices | TEFAS, the site's JSON API | not needed | business days | `prices/tefas.py` |
 | Share prices (BIST) | Yahoo Finance chart API (unofficial) | not needed | trading days | `prices/yahoo.py` |
 
@@ -108,7 +111,11 @@ TurkStat (TÜİK).
   (`timestamp`), the closes (`indicators.quote[0].close`) and the splits
   (`events.splits`, numerator and denominator).
 - **Splits:** the closes are adjusted for every later split, so the program
-  undoes the adjustment (METHOD §23); the request always runs to today. On
+  undoes the adjustment (METHOD §23); the request always runs to today, and
+  from the first stored price, so that every split since then is reported.
+  They are kept in the ledger's file (`stock_splits`), also for shares that
+  were not held on the day: the portfolio reports follow a share's price
+  through them (METHOD §30). On
   FROTO.IS, for example, the close of 2025-05-06 comes as 87.75 and is stored
   as 877.50, the price of that day, because of the 10-for-1 split of
   2025-05-07.
@@ -123,6 +130,21 @@ The annual and monthly changes of TurkStat's CPI, from 2005-01 to today, are
 published as an HTML table. The program reads the table and chains the
 monthly changes (see [METHOD.md](METHOD.md) §5.2). If the page layout changes,
 the program stops with a clear error.
+
+### TCMB policy rate page
+
+- **Address:** `https://www.tcmb.gov.tr/wps/wcm/connect/TR/TCMB+TR/Main+Menu/Temel+Faaliyetler/Para+Politikasi/Merkez+Bankasi+Faiz+Oranlari/1+Hafta+Repo`,
+  an HTML page, no key.
+- **Contents:** one table, a row for every day the one-week repo auction rate
+  changed since 2010-05-20: `Tarih | Borç Alma | Borç Verme` (date, borrowing,
+  lending), `DD.MM.YYYY`, the rate in per cent a year with a decimal point.
+  Only the lending column is filled; that is the rate stored (series
+  `POLICY_RATE`, each rate from its day on).
+- **Use:** what lira cash earns in the investment reports (METHOD §29). A
+  copy of the table ships with the package, so the reports work before the
+  first update and offline; an update adds the changes since.
+- **If the page changes** so that no row can be read, the update says so and
+  the copy is used.
 
 ## Bank statements
 

@@ -253,6 +253,8 @@ class ReturnsReport:
     base_month: date | None
     cpi_extrapolated: bool
     """The period ends after the last published CPI month (prices held constant since)."""
+    cash: object | None = None
+    """What the lira earned at the TCMB policy rate over the same days (``portfolio.CashBenchmark``)."""
 
     @property
     def days(self) -> int:
@@ -283,7 +285,11 @@ def returns_report(
             if any(d.value or d.inflow or d.outflow for d in days):
                 per_account.append(returns_of(account.path, days))
     extrapolated = market.deflator is not None and market.deflator.is_extrapolated(end)
-    return ReturnsReport(start, end, whole.accounts, units, per_account, market.base_month, extrapolated)
+    from financeproject.prices.store import load_rates
+    from financeproject.reports.portfolio import cash_benchmark
+
+    cash = cash_benchmark(*load_rates(session), start, end)
+    return ReturnsReport(start, end, whole.accounts, units, per_account, market.base_month, extrapolated, cash)
 
 
 # --------------------------------------------------------------------------- risk

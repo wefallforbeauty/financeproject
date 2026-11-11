@@ -5,10 +5,14 @@
 - Gold: Frankfurter XAU/USD in yearly chunks, stored per gram in USD.
 - CPI: EVDS ``TP.TUKFIY2025.GENEL`` with a key, otherwise the TCMB table.
   A snapshot of the table ships with the package so real TRY works offline.
+- The policy rate: the TCMB one-week repo page (a snapshot ships with the
+  package too).
 - Funds: TEFAS, one request per fund (price source ``tefas``).
 - Shares: Yahoo Finance, one request per share (price source ``yahoo``), with
   a warning when a split happened while the ledger held the share and no
-  ``finance split`` was recorded for it.
+  ``finance split`` was recorded for it. Every split Yahoo reports since the
+  first stored price is kept (table ``stock_splits``), so that a share's
+  returns can be followed through splits from before the ledger held it.
 
 Funds and shares are fetched from the start date, or from a week before the
 last stored price when the start is already covered.
@@ -33,15 +37,25 @@ from financeproject.core.inflation import chain_index
 from financeproject.errors import EvdsKeyError, SourceError
 from financeproject.ledger.models import Account, Commodity, Posting, Price, Transaction
 from financeproject.ledger.transactions import SPLIT_SOURCE
-from financeproject.prices import evds, frankfurter, tcmb, tcmb_cpi, tefas, yahoo
+from financeproject.prices import (
+    evds,
+    frankfurter,
+    tcmb,
+    tcmb_cpi,
+    tcmb_rates,
+    tefas,
+    yahoo,
+)
 from financeproject.prices.store import (
     ADDED,
     CPI,
+    POLICY_RATE,
     UPDATED,
     price_dates,
     price_range,
     upsert_index,
     upsert_price,
+    upsert_split,
 )
 
 CPI_BASE_LABEL = "2025=100"
@@ -216,6 +230,20 @@ def update_cpi(session: Session, client: httpx.Client, api_key: str | None = Non
     return report
 
 
+def update_rates(session: Session, client: httpx.Client) -> UpdateReport:
+    """The TCMB policy rate with the day each rate took effect."""
+    report = UpdateReport()
+    try:
+        rows = tcmb_rates.fetch_policy_rates(client)
+    except SourceError as exc:
+        report.warnings.append(f"Could not get the policy rate ({exc}); the copy shipped with the program is used.")
+        return report
+    for day, rate in rows:
+        report.count(upsert_index(session, POLICY_RATE, day, rate, "tcmb-rates", "% a year"))
+    report.messages.append(f"Policy rate (TCMB one-week repo): {rows[0][0]} – {rows[-1][0]}, now {rows[-1][1]} %")
+    return report
+
+
 REFRESH_DAYS = 7
 
 
@@ -317,8 +345,10 @@ def update_yahoo(
         if progress:
             progress(f"Yahoo {symbol}")
         since = _fetch_from(session, code, "yahoo", start)
+        stored_from = session.scalar(select(func.min(Price.date)).where(Price.commodity_code == code, Price.source == "yahoo"))
         try:
-            chart = yahoo.fetch_chart(client, symbol, since, end, today)
+            # from the first stored price, so that every split since then is reported
+            chart = yahoo.fetch_chart(client, symbol, min(since, stored_from or since), end, today)
         except SourceError as exc:
             report.warnings.append(f"{code}: {exc}")
             continue
@@ -326,8 +356,10 @@ def update_yahoo(
             report.warnings.append(f"{code} is quoted in {chart.currency}, which is not a commodity of the ledger.")
             continue
         for day, price in chart.prices:
-            report.count(upsert_price(session, code, chart.currency, day, price, "yahoo"))
+            if day >= since:
+                report.count(upsert_price(session, code, chart.currency, day, price, "yahoo"))
         for split in chart.splits:
+            upsert_split(session, code, split.on, split.ratio, "yahoo")
             if split.on >= since and _held_on(session, code, split.on) and not _split_recorded(session, code, split.on):
                 report.warnings.append(
                     f"{code}: a {split.ratio.normalize():f}-for-1 split on {split.on}. If the ledger still has the old "
@@ -338,7 +370,7 @@ def update_yahoo(
     return report
 
 
-SOURCES = ("fx", "gold", "cpi", "tefas", "yahoo")
+SOURCES = ("fx", "gold", "cpi", "rates", "tefas", "yahoo")
 
 
 def update_range(session: Session, start: date | None, end: date | None, today: date) -> tuple[date, date]:
@@ -379,6 +411,11 @@ def update_all(
         if progress:
             progress("CPI")
         report.merge(update_cpi(session, client, api_key, today))
+        session.commit()
+    if only in (None, "rates"):
+        if progress:
+            progress("Policy rate")
+        report.merge(update_rates(session, client))
         session.commit()
     if only in (None, "tefas"):
         report.merge(update_tefas(session, client, start, end, today, progress=progress))

@@ -127,6 +127,9 @@ def test_update_tefas_and_yahoo(market):
     assert book.resolve("BIST.TESTA", date(2026, 5, 4)).value == D("122.40")  # before the 2-for-1 split
     assert book.resolve("BIST.TESTA", date(2026, 5, 6)).value == D("63.30")
     assert "periyod" in calls[0].content.decode() and calls[1].url.params["events"] == "split"
+    from financeproject.prices.store import stored_splits
+
+    assert stored_splits(s, "BIST.TESTA") == [(date(2026, 5, 5), 2.0)]  # kept, whether or not the share was held
 
 
 def test_a_split_while_holding_the_share_is_reported_until_recorded(market):

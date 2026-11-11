@@ -1,0 +1,5 @@
+    <label class="field"><span>{{ _("First day") }}</span><input type="date" name="start" value="{{ form.start }}"></label>
+    <label class="field"><span>{{ _("Last day") }}</span><input type="date" name="end" value="{{ form.end }}"></label>
+    <label class="field"><span>{{ _("Returns of each") }}</span><select name="frequency">{% for key, label in frequencies.items() %}<option value="{{ key }}" {% if form.frequency == key %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}</select></label>
+    <label class="field"><span>{{ _("Cash earns, % a year") }}</span><input type="text" inputmode="decimal" name="risk_free" value="{{ form.risk_free }}" placeholder="{{ _('the TCMB policy rate') }}"></label>
+    <label class="field"><span>{{ _("Covariance") }}</span><select name="covariance">{% for key, label in covariances.items() %}<option value="{{ key }}" {% if form.covariance == key %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}</select></label>

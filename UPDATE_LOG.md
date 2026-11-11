@@ -1,5 +1,88 @@
 # Update log
 
+## 05 (2026-11-11)
+
+Pull request #10. Version 05 is portfolio theory on what the household holds,
+shown as a description of the past with its uncertainty, not as advice.
+
+### Cash as the benchmark
+
+- **The policy rate** of the TCMB (the one-week repo auction rate, with the
+  day each rate took effect since May 2010) is read from the bank's page
+  (`prices/tcmb_rates.py`); `finance price update` fetches it (`--only rates`)
+  and a copy ships with the package. Cash grows by it every day
+  (`core/rates.py`).
+- **`finance returns`** and the Returns page say what lira cash earned over
+  the same days, before tax.
+
+### Portfolios of the holdings
+
+- **`finance frontier`** and Investments → Portfolios: what is held now next
+  to equal weights (1/N), least risk (the global minimum variance portfolio),
+  the best return for its risk (the tangency portfolio) and hierarchical risk
+  parity, without short selling, with the efficient frontier. Returns are
+  weekly by default (daily and monthly on request) and measured above cash;
+  `--risk-free` or "Cash earns" gives another rate.
+- **How sure:** the covariance has its correlations shrunk towards their
+  average (Ledoit & Wolf's constant correlation target), which keeps every
+  holding's own variance; every holding's mean comes with its 90 % range;
+  every weight with its 5th to 95th percentile over 200 histories resampled
+  from the periods.
+- **What is left out, and said:** a holding that barely moves against cash (a
+  money market fund), one priced only now and then, one without prices. A
+  return that looks like an unrecorded split is reported.
+- **`finance backtest`** and Investments → Out of sample: each portfolio
+  chosen from a window of the past only, held, and chosen again; its return,
+  volatility, ratio, largest fall, the share traded at each rebalancing, its
+  growth against 1/N and the p-value of the difference in Sharpe ratios
+  (Jobson-Korkie with Memmel's correction).
+- **The mathematics** (`core/portfolio.py`) needs numpy only: a primal
+  active-set optimizer for the quadratic programs, the shrinkage estimator,
+  single linkage and the recursive bisection of hierarchical risk parity.
+
+### Prices
+
+- **Splits** a price source reports are kept (`stock_splits`), also from
+  before a share was held, so that a share's price history can be followed
+  through them. Share prices are asked for from the first stored day on, so
+  every split since then is known.
+- **Older prices:** Settings → Prices takes a first day ("From"), as
+  `finance price update --start` does; the portfolio reports look back up to
+  three years.
+- The demo household with real prices fetches the policy rate too.
+
+### In the interface
+
+- Two new pages under Investments, in English and Turkish, light and dark,
+  and at a phone's width: a chart of risk against return above cash, with a
+  key in the page and every point's name placed where it covers nothing; one
+  small chart for each portfolio against equal weights on one scale; tables
+  that keep the columns that matter on a phone.
+- A minus sign comes before the per cent sign in Turkish charts (−%5).
+
+### Tests and documents
+
+- 340 tests (312 before). The optimizer: the conditions an optimum must meet
+  on random cases (Hypothesis), closed forms, a search over a grid. The
+  shrunk covariance: the paper's formulas written out pair by pair, and a
+  sample worked with PyPortfolioOpt 1.6. Hierarchical risk parity: a matrix
+  worked through the paper's code with scipy's linkage. The cash index, the
+  efficient frontier, resampling, the out-of-sample walk, the test of two
+  Sharpe ratios; the sample of returns on a ledger (market days, splits,
+  what is left out), the reports, the policy rate page and its update, the
+  commands and the pages.
+- During development the optimizer agreed with scipy's SLSQP, the shrinkage
+  with PyPortfolioOpt and the tree with scipy on 300 random cases each; the
+  reports ran on three years of real prices of three funds, three shares,
+  dollars and gold. That trial changed the shrinkage target (equal variances
+  made the dollar look almost three times as risky as it was) and the market
+  days (gold is quoted on weekends).
+- A test of loans that failed in the first half of a month is fixed.
+- README rewritten for 05, with a picture of the new page;
+  `docs/METHOD.md` §29–31 describe cash and the policy rate, the portfolios
+  and the out-of-sample test; `docs/DATA_SOURCES.md` the policy rate page.
+- New declared dependency: numpy (pandas brought it already).
+
 ## 04c (2026-10-20)
 
 Pull request #9. Version 04c opens the interface to the household's phones

@@ -908,7 +908,8 @@ REPORT_PAGES = [
     "/reports/cash-flow?real=1", "/reports/sankey", "/reports/change", "/reports/change?unit=usd", "/reports/change?unit=real",
     "/reports/ratios", "/reports/recurring", "/reports/recurring?all=1", "/debts", "/debts/loans/new", "/debts/installments",
     "/debts/payoff", "/debts/calculators", "/investments", "/investments/risk?window=60", "/investments/concentration",
-    "/rules",
+    "/investments/frontier", "/investments/frontier?frequency=daily&covariance=sample&risk_free=40",
+    "/investments/backtest", "/investments/backtest?window=20&step=2", "/rules",
 ]
 
 
@@ -953,6 +954,7 @@ def test_add_pay_and_delete_a_loan(web, ledger):
         "name": "Car loan", "new_account": "Liabilities:Loans:Car", "kind": "vehicle_loan", "principal": "120000",
         "count": "24", "first_due": first_due.isoformat(), "terms": "rate", "rate": "2.99", "method": "annuity",
         "start": "new", "paid_into": "Assets:Bank:Checking", "reference": "99-1",
+        "disbursed": (TODAY - timedelta(days=20)).isoformat(),  # else it is a month before the first installment: after today in the first half of a month
     })
     assert answer.status_code == 303, answer.text[:500]
     page = web.get(answer.headers["location"]).text
@@ -1165,3 +1167,29 @@ def test_bundled_libraries_match_their_recorded_hashes():
         assert hashlib.sha256((vendor / name).read_bytes()).hexdigest() == digest, name
     for name in ("htmx.LICENSE", "echarts.LICENSE", "echarts.NOTICE"):
         assert (vendor / name).stat().st_size > 0
+
+
+def test_portfolio_pages(demo_web):
+    page = demo_web.get("/investments/frontier").text
+    chart = json.loads(re.search(r'<script type="application/json" id="frontier-data">(.*?)</script>', page, re.DOTALL).group(1))
+    assert len(chart["frontier"]) > 10 and {a["name"] for a in chart["assets"]} == {"DEMO.FUND", "DEMO.SHARE", "USD", "XAU_G"}
+    risks = [x for x, _ in chart["frontier"]]
+    assert risks == sorted(risks) and chart["now"][0]["name"] == "What you hold now"
+    assert "Equal weights (1/N)" in page and "Hierarchical risk parity" in page and "not advice" in page
+    assert "the copy shipped with the program" in page  # the demo has no downloaded policy rate
+    assert "Cash: 40.00% a year, as given." in demo_web.get("/investments/frontier", params={"risk_free": "40"}).text
+    page = demo_web.get("/investments/backtest").text
+    assert page.count('data-chart="ahead"') == 4 and "Against 1/N" in page and "Chosen from the" in page
+    # too little history, one account only, a bad rate: an explanation, not a failure
+    answer = demo_web.get("/investments/backtest", params={"window": "500"})
+    assert answer.status_code == 200 and "window" in answer.text and 'data-chart="ahead"' not in answer.text
+    answer = demo_web.get("/investments/frontier", params={"account": "Assets:Gold:Gram Gold"})
+    assert answer.status_code == 200 and "at least two holdings" in answer.text
+    assert demo_web.get("/investments/frontier", params={"risk_free": "x"}).status_code in (200, 400)
+    assert "Cash over the same days" in demo_web.get("/investments").text
+
+
+def test_price_update_takes_an_earlier_first_day(web):
+    assert post(web, "/settings/prices", {"start": "1999-01-01"}).headers["location"] == "/settings#prices"
+    assert "between 2005 and today" in web.get("/settings").text
+    assert 'name="start"' in web.get("/settings").text

@@ -29,6 +29,7 @@
     </tbody>
   </table>
   </div>
+  {% if report.cash %}<p class="pager">{{ _("Cash over the same days (Turkish lira at the TCMB policy rate, before tax): {total} ({year} a year).", total=percent(report.cash.total, 2, sign=True), year=percent(report.cash.year, 2, sign=True)) }}</p>{% endif %}
 </article>
 {% if report.by_account %}
 <article class="card flush mb">

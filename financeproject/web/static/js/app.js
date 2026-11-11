@@ -14,10 +14,11 @@
     return new Intl.NumberFormat(numberLocale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(value);
   }
 
-  /* 23.1% in English, %23,1 in Turkish (the number in the chosen number format) */
+  /* 23.1% in English, %23,1 in Turkish (the number in the chosen number format); a minus comes first: −%5 */
   function pct(fraction, decimals) {
-    const text = number(fraction * 100, decimals);
-    return root.lang === "tr" ? "%" + text : text + "%";
+    const text = number(Math.abs(fraction) * 100, decimals);
+    const sign = fraction < 0 && /[1-9]/.test(text) ? "\u2212" : "";
+    return sign + (root.lang === "tr" ? "%" + text : text + "%");
   }
 
   function compact(value) {
@@ -309,10 +310,281 @@
     redrawOnThemeChange(draw, chart);
   }
 
+  /* Risk against return above cash: the efficient frontier as a line, the holdings and the portfolios as points
+     told apart by shape as well as colour (the key is in the page). Every point carries its name. Points often
+     coincide (least risk and risk parity, the best ratio and a single holding), so the names are placed here:
+     each tries the sides of its point in turn and takes the first where it covers no other point, no other name
+     and not the line. */
+  function frontierChart(element) {
+    const data = chartData(element);
+    if (!data || !data.frontier.length) return;
+    const chart = window.echarts.init(element, null, { renderer: "svg" });
+    const family = getComputedStyle(element).fontFamily;
+    const canvas = document.createElement("canvas");
+    const ruler = canvas.getContext ? canvas.getContext("2d") : null;
+    const SIZE = 12;
+    const HEIGHT = 16;
+    const SIDES = {
+      right: (p, d) => [p.px + d, p.py - HEIGHT / 2],
+      left: (p, d) => [p.px - d - p.width, p.py - HEIGHT / 2],
+      top: (p, d) => [p.px - p.width / 2, p.py - d - HEIGHT],
+      bottom: (p, d) => [p.px - p.width / 2, p.py + d],
+      "top right": (p, d) => [p.px + d * 0.6, p.py - d * 0.6 - HEIGHT],
+      "bottom right": (p, d) => [p.px + d * 0.6, p.py + d * 0.6],
+      "top left": (p, d) => [p.px - d * 0.6 - p.width, p.py - d * 0.6 - HEIGHT],
+      "bottom left": (p, d) => [p.px - d * 0.6 - p.width, p.py + d * 0.6],
+      // a line further out, for points that share a place: their names stack like a list
+      "far top right": (p, d) => [p.px + d * 0.6, p.py - d * 0.6 - 2 * HEIGHT - 1],
+      "far bottom right": (p, d) => [p.px + d * 0.6, p.py + d * 0.6 + HEIGHT + 1],
+      "far top left": (p, d) => [p.px - d * 0.6 - p.width, p.py - d * 0.6 - 2 * HEIGHT - 1],
+      "far bottom left": (p, d) => [p.px - d * 0.6 - p.width, p.py + d * 0.6 + HEIGHT + 1],
+      "far top": (p, d) => [p.px - p.width / 2, p.py - d - 2 * HEIGHT - 1],
+      "far bottom": (p, d) => [p.px - p.width / 2, p.py + d + HEIGHT + 1],
+    };
+    const FAR = ["far bottom right", "far top right", "far bottom", "far top", "far bottom left", "far top left"];
+    const RIGHT_FIRST = ["right", "left", "top", "bottom", "top right", "bottom right", "top left", "bottom left", ...FAR];
+    const LEFT_FIRST = ["left", "right", "bottom", "top", "bottom left", "top left", "bottom right", "top right", ...FAR];
+
+    function measure(text, bold) {
+      if (!ruler) return text.length * 6.8;
+      ruler.font = (bold ? "600 " : "") + SIZE + "px " + family;
+      return ruler.measureText(text).width;
+    }
+
+    function names(t) {
+      const at = (x, y) => chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [x, y]);
+      let area = null;
+      try {
+        area = chart.getModel().getComponent("grid").coordinateSystem.getRect();
+      } catch (error) {
+        area = null;
+      }
+      const box = area
+        ? { left: area.x + 2, right: chart.getWidth() - 2, top: area.y + 1, bottom: area.y + area.height - 1 }
+        : { left: 0, right: chart.getWidth(), top: 0, bottom: chart.getHeight() };
+
+      // who chooses first gets the best place: what you hold, then the portfolios, then the holdings
+      const points = [];
+      const add = (items, radius, sides, color, bold) =>
+        items.forEach((item) => {
+          const [px, py] = at(item.x, item.y);
+          points.push({ name: item.name, px, py, radius, sides, color, bold, width: measure(item.name, bold) });
+        });
+      add(data.now, 7, RIGHT_FIRST, t.ink, true);
+      add(data.portfolios, 7, RIGHT_FIRST, t.ink, false);
+      add(data.assets, 6, LEFT_FIRST, t.ink2, false);
+
+      const line = []; // the frontier, a point every few pixels
+      data.frontier.map(([x, y]) => at(x, y)).forEach((q, i, all) => {
+        if (!i) return line.push(q);
+        const a = all[i - 1];
+        const steps = Math.max(1, Math.ceil(Math.hypot(q[0] - a[0], q[1] - a[1]) / 4));
+        for (let k = 1; k <= steps; k++) line.push([a[0] + ((q[0] - a[0]) * k) / steps, a[1] + ((q[1] - a[1]) * k) / steps]);
+      });
+
+      const taken = [];
+      if (area) {
+        // the word at the end of the line of cash
+        const zero = at(0, 0)[1];
+        taken.push({ x: area.x + area.width + 2, y: zero - HEIGHT / 2, w: measure(data.labels.cash, false) + 6, h: HEIGHT });
+      }
+      const covered = (a, b) =>
+        Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+      const cost = (point, rect) => {
+        let sum = 0;
+        taken.forEach((other) => {
+          sum += 4 * covered(rect, other);
+        });
+        points.forEach((other) => {
+          if (other === point) return;
+          const r = other.radius;
+          sum += 3 * covered(rect, { x: other.px - r, y: other.py - r, w: 2 * r, h: 2 * r });
+        });
+        line.forEach(([x, y]) => {
+          if (x > rect.x - 3 && x < rect.x + rect.w + 3 && y > rect.y - 2 && y < rect.y + rect.h + 2) sum += 6;
+        });
+        const outside =
+          Math.max(0, box.left - rect.x) + Math.max(0, rect.x + rect.w - box.right) +
+          Math.max(0, box.top - rect.y) + Math.max(0, rect.y + rect.h - box.bottom);
+        return sum + 40 * outside;
+      };
+      points.forEach((point) => {
+        let best = null;
+        point.sides.forEach((side, order) => {
+          const [x, y] = SIDES[side](point, point.radius + 5);
+          const rect = { x, y, w: point.width, h: HEIGHT };
+          const c = cost(point, rect) + order * 0.001;
+          if (!best || c < best.cost) best = { cost: c, rect };
+        });
+        taken.push(best.rect);
+        point.rect = best.rect;
+      });
+      chart.setOption({
+        graphic: {
+          elements: points.map((point, i) => ({
+            id: "name-" + i,
+            type: "text",
+            silent: true,
+            z: 6,
+            x: point.rect.x,
+            y: point.rect.y + (HEIGHT - SIZE) / 2 - 1,
+            style: { text: point.name, fill: point.color, fontSize: SIZE, fontFamily: family, fontWeight: point.bold ? 600 : 400 },
+          })),
+        },
+      });
+    }
+
+    function draw() {
+      const t = tokens();
+      const L = data.labels;
+      const narrow = element.clientWidth < 560;
+      const points = (items) => items.map((p) => ({ name: p.name, value: [p.x, p.y] }));
+      const scatter = (items, extra) => Object.assign({ type: "scatter", data: points(items), emphasis: { disabled: true } }, extra);
+      chart.setOption(
+        {
+          animation: false,
+          grid: { left: 8, right: narrow ? 48 : 110, top: 32, bottom: 28, containLabel: true },
+          tooltip: {
+            trigger: "item",
+            backgroundColor: t.surface,
+            borderColor: t.grid,
+            textStyle: { color: t.ink },
+            extraCssText: "box-shadow: none; border-radius: 8px;",
+            formatter(p) {
+              const [x, y] = p.value;
+              const ratio = x > 0 ? " · " + L.ratio + " " + number(y / x, 2) : "";
+              return (
+                '<div class="tt-value">' + escapeHtml((y > 0 ? "+" : "") + pct(y / 100, 1) + " · " + pct(x / 100, 1)) + "</div>" +
+                '<div class="tt-label">' + escapeHtml((p.seriesType === "line" ? L.frontier : p.name) + ratio) + "</div>"
+              );
+            },
+          },
+          xAxis: {
+            type: "value",
+            min: 0,
+            name: L.x,
+            nameLocation: "middle",
+            nameGap: 26,
+            nameTextStyle: { color: t.ink2 },
+            axisLine: { lineStyle: { color: t.baseline } },
+            axisLabel: { color: t.muted, formatter: (v) => pct(v / 100, 0) },
+            splitLine: { lineStyle: { color: t.grid } },
+          },
+          yAxis: {
+            type: "value", // from zero, so that the line of cash is always in sight
+            name: L.y,
+            nameGap: 14,
+            nameTextStyle: { color: t.ink2, align: "left" },
+            axisLabel: { color: t.muted, formatter: (v) => pct(v / 100, 0) },
+            splitLine: { lineStyle: { color: t.grid } },
+          },
+          series: [
+            {
+              type: "line",
+              data: data.frontier,
+              showSymbol: false,
+              smooth: false,
+              lineStyle: { width: 2, color: t.accent, cap: "round", join: "round" },
+              itemStyle: { color: t.accent },
+              emphasis: { disabled: true },
+              markLine: {
+                silent: true,
+                symbol: "none",
+                lineStyle: { color: t.baseline, type: "dashed", width: 1 },
+                label: { formatter: L.cash, color: t.ink2, position: "end" },
+                data: [{ yAxis: 0 }],
+              },
+            },
+            scatter(data.assets, { symbol: "circle", symbolSize: 9, itemStyle: { color: t.surface, borderColor: t.ink2, borderWidth: 2 } }),
+            scatter(data.portfolios, { symbol: "diamond", symbolSize: 12, itemStyle: { color: t.series2, borderColor: t.surface, borderWidth: 1 } }),
+            scatter(data.now, { symbol: "rect", symbolSize: 12, itemStyle: { color: t.series3, borderColor: t.surface, borderWidth: 1 } }),
+          ],
+        },
+        true
+      );
+      names(t);
+      element.setAttribute("aria-label", data.summary);
+    }
+
+    redrawOnThemeChange(draw, chart);
+    window.addEventListener("resize", draw); // after the chart took its new size: the names are placed again
+  }
+
+  /* One small chart for each portfolio: its growth over that of equal weights, with the line of "level". */
+  function aheadChart(element) {
+    const data = chartData(element);
+    if (!data || !data.dates.length) return;
+    const chart = window.echarts.init(element, null, { renderer: "svg" });
+    const last = data.values.length - 1;
+
+    function draw() {
+      const t = tokens();
+      chart.setOption(
+        {
+          animation: false,
+          grid: { left: 4, right: 56, top: 10, bottom: 4, containLabel: true },
+          tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "line", lineStyle: { color: t.baseline, width: 1 } },
+            backgroundColor: t.surface,
+            borderColor: t.grid,
+            textStyle: { color: t.ink },
+            extraCssText: "box-shadow: none; border-radius: 8px;",
+            formatter(params) {
+              const p = params[0];
+              const v = typeof p.value === "object" ? p.value.value : p.value;
+              return (
+                '<div class="tt-value">' + escapeHtml((v > 0 ? "+" : "") + pct(v / 100, 1)) + "</div>" +
+                '<div class="tt-label">' + escapeHtml(longDate(p.axisValue)) + "</div>"
+              );
+            },
+          },
+          xAxis: {
+            type: "category",
+            boundaryGap: false,
+            data: data.dates,
+            axisLine: { show: false },
+            axisTick: { show: false },
+            axisLabel: { color: t.muted, formatter: monthLabel, hideOverlap: true },
+          },
+          yAxis: {
+            type: "value",
+            min: data.min,
+            max: data.max,
+            splitNumber: 3,
+            axisLabel: { color: t.muted, formatter: (v) => pct(v / 100, 0) },
+            splitLine: { lineStyle: { color: t.grid } },
+          },
+          series: [
+            {
+              type: "line",
+              data: data.values.map((v, i) =>
+                i === last ? { value: v, symbol: "circle", symbolSize: 8, itemStyle: { color: t.accent, borderColor: t.surface, borderWidth: 2 } } : v
+              ),
+              symbol: "none",
+              showSymbol: true,
+              showAllSymbol: true, // else the dot of the last day goes missing on a narrow chart
+              lineStyle: { width: 2, color: t.accent, cap: "round", join: "round" },
+              itemStyle: { color: t.accent },
+              emphasis: { disabled: true },
+              endLabel: { show: true, color: t.ink2, formatter: (p) => { const v = typeof p.value === "object" ? p.value.value : p.value; return (v > 0 ? "+" : "") + pct(v / 100, 1); } },
+              markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: t.baseline, width: 1, type: "solid" }, data: [{ yAxis: 0 }] },
+            },
+          ],
+        },
+        true
+      );
+    }
+
+    redrawOnThemeChange(draw, chart);
+  }
+
   function reportCharts() {
     if (typeof window.echarts === "undefined") return;
     document.querySelectorAll('[data-chart="bars"]').forEach(barsChart);
     document.querySelectorAll('[data-chart="sankey"]').forEach(sankeyChart);
+    document.querySelectorAll('[data-chart="frontier"]').forEach(frontierChart);
+    document.querySelectorAll('[data-chart="ahead"]').forEach(aheadChart);
   }
 
   /* ---------------------------------------------------------- the wall monitor */
