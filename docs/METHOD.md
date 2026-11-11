@@ -881,6 +881,216 @@ mode on, but only a phone or the computer may turn it off, so that a guest
 cannot. Where the browser allows it (the Screen Wake Lock API), the page keeps
 the screen on.
 
+## 29. Cash and the policy rate
+
+The investment reports need to say what the money would have earned doing
+nothing. That benchmark is Turkish lira at the policy rate of the TCMB, the
+one-week repo auction rate, which the bank lists with the day each rate took
+effect, back to May 2010 (`prices/tcmb_rates.py`; a copy ships with the
+package and `finance price update` refreshes it). The rate $R_d$ of day $d$
+is a simple yearly rate in per cent. Cash grows every calendar day
+(`core/rates.py`):
+
+$$\frac{C(t_1)}{C(t_0)} = \prod_{t_0 < d \le t_1} \left(1 + \frac{R_d}{100 \cdot 365}\right)$$
+
+so a rate of 36 % held for a year compounds to
+$(1 + 0.36/365)^{365} - 1 = 43.3\,\%$. A rate given by hand
+(`--risk-free`, "Cash earns") is taken as what a year earns, and turned into
+the daily step that compounds to it.
+
+`finance returns` shows this growth over its period next to the portfolio's
+returns. Sections 30 and 31 measure every return above it.
+
+What it is not: an offer. It is before the tax withheld on interest, and
+deposits have paid more and less than the policy rate, at times by much (in
+2022 and the first half of 2023 deposit rates stood well above it).
+Before May 2010 the policy rate was another instrument; the reports ask for
+a rate by hand there.
+
+## 30. Portfolio theory: other ways to weigh the holdings
+
+`finance frontier` takes what the investment accounts hold today (§24) and
+asks how else the same holdings could have been weighed. It describes a
+sample of the past. It is not advice, and it says how little the sample
+knows.
+
+**The returns.** For every holding the prices the ledger has are used,
+whether or not it was held then. Prices are taken at the last market day of
+every week (`--frequency weekly`, the default), every market day, or every
+month: a fund's price is published a day late and markets close at different
+hours, which blurs daily returns of different assets against each other more
+than weekly ones. A market day is a day on which most of the holdings are
+quoted: gold is quoted on weekends and local holidays too, when nothing else
+moves. A holding takes its last price on or before the day. A share's prices before a split are divided by its ratio,
+for every split its price source reported or the ledger recorded (§23), so a
+split is no return. With $P_{i}(t)$ the price of holding $i$ in TRY and
+$c_t$ what cash earned in period $t$ (§29), the excess return is
+
+$$x_{t,i} = \frac{P_i(t)}{P_i(t-1)} - 1 - c_t$$
+
+The window is the longest one in which every holding has prices, at most
+three years unless `--start` says otherwise; at least 20 periods are needed.
+Left out, and said so:
+
+- a holding that moves less than 0.5 % a year against cash (a money market
+  fund): it is cash, and its ratio of return to risk would divide by almost
+  nothing;
+- a holding without a new price in more than a third of the periods: priced
+  now and then, it would look calm;
+- a holding without any price.
+
+A return of one period below −45 % or above +90 % is reported as a likely
+split nobody recorded.
+
+**The inputs.** $\hat\mu$ is the mean of the $T$ excess returns of the $N$
+holdings and $S$ their covariance. By default the covariance is shrunk
+towards equal correlations (Ledoit & Wolf 2004b): the target $F$ keeps every
+variance of the sample and gives every pair the average correlation $\bar r$,
+
+$$\hat\Sigma = \delta F + (1-\delta)\,S,\qquad f_{ii} = s_{ii},\quad
+f_{ij} = \bar r \sqrt{s_{ii}s_{jj}},\qquad
+\delta = \max\{0, \min\{1, \kappa/T\}\},\quad \kappa = \frac{\pi - \rho}{\gamma}$$
+
+Here $\pi = \sum_{i,j} \pi_{ij}$ with
+$\pi_{ij} = \frac1T \sum_t (x_{ti}x_{tj} - s_{ij})^2$ measures the sampling
+error of $S$ (the returns taken from their means),
+$\gamma = \sum_{i,j} (f_{ij} - s_{ij})^2$ how far the target is from the
+sample, and $\rho$ how the errors of the two move together:
+
+$$\rho = \sum_i \pi_{ii} + \bar r \sum_{i \ne j} \sqrt{\frac{s_{jj}}{s_{ii}}}\;
+\frac1T \sum_t (x_{ti}^2 - s_{ii})(x_{ti}x_{tj} - s_{ij})$$
+
+with $S$ and every average over the periods taken with divisor $T$. The page
+shows $\delta$: the share by which every correlation is pulled towards the
+average. With two holdings there is one correlation and nothing to shrink.
+`--covariance sample` uses $S$ as it is (divisor $T-1$).
+
+The same authors' estimator with a target of equal variances (Ledoit & Wolf
+2004a) is not used. A household's holdings differ a hundredfold in variance,
+a managed exchange rate next to a share, and that target made the calmest
+holding look almost three times as risky as it was when it was tried on real
+prices. The implementation agrees with PyPortfolioOpt's (Martin 2021) to 15
+digits on 300 random samples; the tests hold a sample worked with it, and the
+paper's formulas written out one pair at a time.
+
+**The figures.** With $P$ periods a year (52, 252 or 12), a portfolio $w$
+has the yearly excess return $P\,\hat\mu' w$ and the volatility
+$\sqrt{P\, w'\hat\Sigma w}$; their quotient is its Sharpe ratio (Sharpe
+1966, 1994). The mean is scaled, not compounded, as the ratio's convention
+is. A ratio below zero says little: when less than cash was earned, less
+risk makes the ratio worse, not better (Israelsen 2005), and in a country
+where cash earns 40 % a year whole years pass with every holding under it.
+The pages say so and show the return above cash next to every ratio. For each holding the page also gives the 90 % range of its mean,
+$P(\hat\mu_i \pm 1.645\, s_i/\sqrt{T})$: how far the mean of $T$ periods can
+be from the true one. It depends on the length of the window in years, not
+on how often prices are sampled (Merton 1980), and for a few years it is
+wide: often wider than the difference between two holdings.
+
+**The portfolios.** All are fully invested and never short:
+$w \ge 0$, $\sum_i w_i = 1$.
+
+| Portfolio | Definition | Uses |
+|---|---|---|
+| What you hold now | today's shares of the holdings in their total value | |
+| Equal weights (1/N) | $w_i = 1/N$ (DeMiguel, Garlappi & Uppal 2009) | nothing |
+| Least risk | $\min_w w'\hat\Sigma w$: the global minimum variance portfolio | $\hat\Sigma$ |
+| Best return for its risk | $\max_w \hat\mu' w / \sqrt{w'\hat\Sigma w}$: the tangency portfolio | $\hat\mu$, $\hat\Sigma$ |
+| Hierarchical risk parity | López de Prado (2016), below | $\hat\Sigma$ |
+
+The ratio of the tangency portfolio does not change when $w$ is scaled, so it
+is found as $\min_y y'\hat\Sigma y$ with $\hat\mu' y = 1$, $y \ge 0$, and
+$w = y/\sum_i y_i$ (Cornuéjols & Tütüncü 2007, chapter 8). When no holding
+earned more than cash, there is no such portfolio and the page says so.
+
+**The efficient frontier** (Markowitz 1952) is the set of portfolios with the
+least risk for their return: the solutions of
+$\min_w \tfrac12 w'\hat\Sigma w - \lambda\,\hat\mu' w$ for $\lambda$ from 0
+(least risk) up to where everything is in the holding with the highest mean.
+With the bounds $w \ge 0$ it is made of pieces; 60 values of $\lambda$ trace
+it. The bounds do part of the work of shrinkage (Jagannathan & Ma 2003).
+
+**Hierarchical risk parity** uses no means and inverts no matrix. From the
+correlations $\rho_{ij}$ of $\hat\Sigma$: the distance
+$d_{ij} = \sqrt{(1-\rho_{ij})/2}$; the distance between the columns of that
+matrix, $\tilde d_{ij} = \sqrt{\sum_k (d_{ki} - d_{kj})^2}$; a single-linkage
+tree on $\tilde d$; the holdings in the order of its leaves, similar ones
+side by side. Then the list is halved again and again, and the money of a
+piece is split between its halves in inverse proportion to their variances,
+$\alpha = 1 - V_1/(V_1+V_2)$, where a half's variance $V$ is that of its
+inverse-variance portfolio. The tree's leaf order follows scipy's `linkage`
+(Virtanen et al. 2020); the tests hold a matrix worked through the paper's
+code.
+
+**The optimizer** is a primal active-set method for convex quadratic programs
+(Nocedal & Wright 2006, algorithm 16.3), written for this problem: the
+holdings at zero form the working set, the rest is solved exactly, a step
+that would make a weight negative stops there, and a weight is set free again
+when its multiplier is negative. It is exact for these small problems and
+needs nothing beyond numpy. The tests check the conditions an optimum must
+meet (Karush–Kuhn–Tucker) on random cases, closed forms where no bound
+binds, and a search over a grid; during development its results agreed with
+scipy's SLSQP on 300 random cases to 12 decimal places.
+
+**How fragile it is.** Means are the weak input: an error in a mean costs
+about ten times what the same error in a variance does (Chopra & Ziemba
+1993), and the portfolio with the best ratio leans on them (Michaud 1989).
+To show it, the periods are drawn again with replacement (Efron 1979) 200
+times; each time the inputs are estimated and the portfolios chosen again.
+The page gives the 5th and 95th percentile of every weight. This follows
+Michaud's resampling (Michaud & Michaud 2008) with rows of the sample in
+place of draws from a normal distribution, which keeps the fat tails and the
+weeks in which everything fell together; it treats the periods as
+independent. A weight that runs from 0 % to 100 % says the portfolio is
+mostly the sample's noise.
+
+Also to keep in mind: share prices leave out dividends (§23); a managed
+exchange rate looks calm until it moves, and volatility measures the window,
+not what can happen; risk is measured in lira.
+
+## 31. Out of sample
+
+`finance backtest` asks what the portfolios of §30 would have earned if they
+had been chosen without knowing what came next (DeMiguel et al. 2009). At a
+rebalancing day the weights are chosen from the $M$ periods before it only
+(`--window`: 52 weeks, 250 days or 36 months, or half the history when that
+is shorter), held for $s$ periods (`--step`: about a month), and chosen again. Between
+rebalancings the weights drift with the returns,
+$w_i \leftarrow w_i (1 + r_{t,i}) / (1 + r_{t,p})$ with
+$r_{t,p} = \sum_i w_i r_{t,i}$. When no holding had beaten cash in a window,
+the best-ratio portfolio does not exist; least risk is held instead, and the
+page counts how often.
+
+From the returns after the first window:
+
+- the return a year, compounded; the mean above cash, the volatility and
+  their ratio as in §30; the largest fall from a peak (§25);
+- **traded each time:** $\tfrac12 \sum_i \lvert w_i^{\text{new}} -
+  w_i^{\text{drifted}} \rvert$, averaged over the rebalancings: the share of
+  the portfolio sold and bought again. Trading costs and the tax on gains are
+  not counted, so a portfolio that trades much is flattered;
+- **against 1/N:** $\prod_t (1+r_{t,p}) / \prod_t (1+r_{t,1/N}) - 1$, also as
+  a line over time, one small chart for each portfolio on the same scale;
+- **p:** the two-sided p-value of the hypothesis that the portfolio's Sharpe
+  ratio equals that of equal weights (Jobson & Korkie 1981, with Memmel's
+  2003 correction). With means $\mu_a, \mu_b$, standard deviations
+  $\sigma_a, \sigma_b$ and covariance $\sigma_{ab}$ of the two series of
+  excess returns over $T$ periods:
+
+$$z = \frac{\sigma_b \mu_a - \sigma_a \mu_b}{\sqrt{\theta}},\qquad
+\theta = \frac{1}{T}\left(2\sigma_a^2\sigma_b^2 - 2\sigma_a\sigma_b\sigma_{ab}
++ \tfrac12\mu_a^2\sigma_b^2 + \tfrac12\mu_b^2\sigma_a^2
+- \frac{\mu_a\mu_b}{\sigma_a\sigma_b}\sigma_{ab}^2\right)$$
+
+The test assumes independent, normal returns; with fat tails it finds
+differences too easily (Ledoit & Wolf 2008), so a small p is a hint and a
+large one is the usual case. DeMiguel et al. estimate that the mean-variance
+portfolio needs about 3,000 months of data to beat 1/N with 25 assets; a
+household has a few years.
+
+"What you hold now" keeps today's shares all along. That is not a choice
+made from the past: if today's shares came about by letting what rose grow,
+the test flatters them.
+
 ## References
 
 - Acerbi, C., & Tasche, D. (2002). On the coherence of expected shortfall. *Journal of Banking & Finance*, 26(7), 1487–1503.
@@ -890,13 +1100,16 @@ the screen on.
 - Bishop, M., Barth, A., & West, M. (eds.). Cookies: HTTP State Management Mechanism (RFC 6265bis; the 400-day limit on a cookie's lifetime). IETF HTTP Working Group draft.
 - Brown, A. L., & Lahey, J. N. (2015). Small victories: Creating intrinsic motivation in task completion and debt repayment. *Journal of Marketing Research*, 52(6), 768–783.
 - Campbell, J. Y. (2006). Household finance. *Journal of Finance*, 61(4), 1553–1604.
+- Chopra, V. K., & Ziemba, W. T. (1993). The effect of errors in means, variances, and covariances on optimal portfolio choice. *Journal of Portfolio Management*, 19(2), 6–11.
 - Christoffersen, P. F. (1998). Evaluating interval forecasts. *International Economic Review*, 39(4), 841–862.
 - Cleveland, W. S., & McGill, R. (1984). Graphical perception: Theory, experimentation, and application to the development of graphical methods. *Journal of the American Statistical Association*, 79(387), 531–554.
 - Cooper, D., Santesson, S., Farrell, S., Boeyen, S., Housley, R., & Polk, W. (2008). Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile. RFC 5280. IETF.
+- Cornuéjols, G., & Tütüncü, R. (2007). *Optimization Methods in Finance*. Cambridge University Press.
 - Dawid, A. P. (1984). Present position and potential developments: Some personal views. Statistical theory: The prequential approach. *Journal of the Royal Statistical Society, Series A*, 147(2), 278–292.
 - DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal versus naive diversification: How inefficient is the 1/N portfolio strategy? *Review of Financial Studies*, 22(5), 1915–1953.
 - DeVaney, S. A. (1994). The usefulness of financial ratios as predictors of household insolvency: Two perspectives. *Financial Counseling and Planning*, 5, 5–24.
 - DeVaney, S. A., & Lytton, R. H. (1995). Household insolvency: A review of household debt repayment, delinquency, and bankruptcy. *Financial Services Review*, 4(2), 137–156.
+- Efron, B. (1979). Bootstrap methods: Another look at the jackknife. *Annals of Statistics*, 7(1), 1–26.
 - Ellerman, D. P. (1985). The mathematics of double entry bookkeeping. *Mathematics Magazine*, 58(4), 226–233.
 - European Parliament and Council (2008). Directive 2008/48/EC on credit agreements for consumers, Annex I: calculation of the annual percentage rate of charge.
 - Fisher, I. (1930). *The Theory of Interest*. New York: Macmillan.
@@ -906,17 +1119,30 @@ the screen on.
 - Gümrük ve Ticaret Bakanlığı (2015). Tüketici Kredisi Sözleşmeleri Yönetmeliği. *Resmî Gazete* 29363, 22 May 2015 (the annual cost rate).
 - Hirschman, A. O. (1964). The paternity of an index. *American Economic Review*, 54(5), 761.
 - IFRS Foundation. IAS 7 *Statement of Cash Flows* (classification into operating, investing and financing activities; §28, the effect of exchange rate changes on cash).
+- Israelsen, C. L. (2005). A refinement to the Sharpe ratio and information ratio. *Journal of Asset Management*, 5(6), 423–427.
 - Jackson, C., Barth, A., Bortz, A., Shao, W., & Boneh, D. (2009). Protecting browsers from DNS rebinding attacks. *ACM Transactions on the Web*, 3(1), article 2.
+- Jagannathan, R., & Ma, T. (2003). Risk reduction in large portfolios: Why imposing the wrong constraints helps. *Journal of Finance*, 58(4), 1651–1683.
+- Jobson, J. D., & Korkie, B. M. (1981). Performance hypothesis testing with the Sharpe and Treynor measures. *Journal of Finance*, 36(4), 889–908.
 - Jorion, P. (2007). *Value at Risk: The New Benchmark for Managing Financial Risk* (3rd ed.). McGraw-Hill.
 - Juster, F. T., Lupton, J. P., Smith, J. P., & Stafford, F. (2006). The decline in household saving and the wealth effect. *Review of Economics and Statistics*, 88(1), 20–27.
 - Kellison, S. G. (2009). *The Theory of Interest* (3rd ed.). McGraw-Hill/Irwin.
 - Kupiec, P. H. (1995). Techniques for verifying the accuracy of risk measurement models. *Journal of Derivatives*, 3(2), 73–84.
+- Ledoit, O., & Wolf, M. (2004a). A well-conditioned estimator for large-dimensional covariance matrices. *Journal of Multivariate Analysis*, 88(2), 365–411.
+- Ledoit, O., & Wolf, M. (2004b). Honey, I shrunk the sample covariance matrix. *Journal of Portfolio Management*, 30(4), 110–119.
+- Ledoit, O., & Wolf, M. (2008). Robust performance hypothesis testing with the Sharpe ratio. *Journal of Empirical Finance*, 15(5), 850–859.
+- López de Prado, M. (2016). Building diversified portfolios that outperform out of sample. *Journal of Portfolio Management*, 42(4), 59–69.
 - Lytton, R. H., Garman, E. T., & Porter, N. M. (1991). How to use financial ratios when advising clients. *Financial Counseling and Planning*, 2, 3–23.
 - Magdon-Ismail, M., & Atiya, A. F. (2004). Maximum drawdown. *Risk*, 17(10), 99–102.
 - Manning, C. D., Raghavan, P., & Schütze, H. (2008). *Introduction to Information Retrieval*, chapter 13: Text classification and naive Bayes. Cambridge University Press.
+- Markowitz, H. (1952). Portfolio selection. *Journal of Finance*, 7(1), 77–91.
+- Martin, R. A. (2021). PyPortfolioOpt: portfolio optimization in Python. *Journal of Open Source Software*, 6(61), 3066.
 - McCallum, A., & Nigam, K. (1998). A comparison of event models for naive Bayes text classification. *AAAI-98 Workshop on Learning for Text Categorization*.
+- Memmel, C. (2003). Performance hypothesis testing with the Sharpe ratio. *Finance Letters*, 1(1), 21–23.
+- Merton, R. C. (1980). On estimating the expected return on the market: An exploratory investigation. *Journal of Financial Economics*, 8(4), 323–361.
 - Michaud, R. O. (1989). The Markowitz optimization enigma: Is "optimized" optimal? *Financial Analysts Journal*, 45(1), 31–42.
+- Michaud, R. O., & Michaud, R. O. (2008). *Efficient Asset Management: A Practical Guide to Stock Portfolio Optimization and Asset Allocation* (2nd ed.). Oxford University Press.
 - Microsoft. XIRR function (the worked example). https://support.microsoft.com/en-us/office/xirr-function-de1242ec-6477-445b-b11b-a303ad9adc9d
+- Nocedal, J., & Wright, S. J. (2006). *Numerical Optimization* (2nd ed.). Springer.
 - OWASP. Cross-Site Request Forgery Prevention Cheat Sheet. https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
 - OWASP. Password Storage Cheat Sheet (scrypt parameters). https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 - Percival, C., & Josefsson, S. (2016). The scrypt Password-Based Key Derivation Function. RFC 7914. IETF.
@@ -924,11 +1150,15 @@ the screen on.
 - Rekhter, Y., Moskowitz, B., Karrenberg, D., de Groot, G. J., & Lear, E. (1996). Address Allocation for Private Internets. RFC 1918. IETF.
 - Schmidt, M. (2008). The Sankey diagram in energy and material flow management, Part I: History. *Journal of Industrial Ecology*, 12(1), 82–94.
 - Selinger, P. *Tutorial on multiple currency accounting*. https://www.mathstat.dal.ca/~selinger/accounting/tutorial.html
+- Sharpe, W. F. (1966). Mutual fund performance. *Journal of Business*, 39(1), 119–138.
+- Sharpe, W. F. (1994). The Sharpe ratio. *Journal of Portfolio Management*, 21(1), 49–58.
 - Tasarruf Mevduatı Sigorta Fonu (TMSF). Decisions of the Fund Board on the insured amount of deposits and participation funds, for 2025 and 2026 (Resmî Gazete, December 2024 and December 2025).
+- Türkiye Cumhuriyet Merkez Bankası (TCMB). 1 Hafta Repo (the one-week repo auction rate, the policy rate since May 2010). https://www.tcmb.gov.tr/wps/wcm/connect/TR/TCMB+TR/Main+Menu/Temel+Faaliyetler/Para+Politikasi/Merkez+Bankasi+Faiz+Oranlari/1+Hafta+Repo
 - Türkiye İş Bankası. Yıllık maliyet oranının hesaplanması (a note with a worked example). https://www.isbank.com.tr/bankamizi-taniyin/Documents/hakkimizda/yillik-maliyet-orani-hesaplanmasi.pdf
 - TurkStat (TÜİK). Announcements on the move of the CPI to base year 2025=100 (2025–2026).
 - U.S. Department of the Treasury. 31 CFR Part 356, Appendix B (the reference CPI of inflation-indexed securities).
 - United Nations, European Commission, IMF, OECD, & World Bank (2009). *System of National Accounts 2008*, chapter 12: Other changes in assets (the revaluation account; nominal, neutral and real holding gains).
+- Virtanen, P., et al. (2020). SciPy 1.0: Fundamental algorithms for scientific computing in Python. *Nature Methods*, 17, 261–272.
 - W3C. Content Security Policy Level 3. https://www.w3.org/TR/CSP3/
 - W3C. Screen Wake Lock API. https://www.w3.org/TR/screen-wake-lock/
 - WHATWG. Fetch Standard: append a request `Origin` header. https://fetch.spec.whatwg.org/#append-a-request-origin-header

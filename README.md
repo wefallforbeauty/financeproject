@@ -1,4 +1,4 @@
-# financeproject 04c
+# financeproject 05
 
 A personal finance program for a household in Türkiye. The goal covers the
 personal balance sheet and net worth, transactions and cash flow, cash-flow
@@ -31,8 +31,15 @@ and concentration, and the categorization rules. **04c** opens the interface
 to the household's phones and a wall monitor on the home network: over an
 encrypted connection (HTTPS), to the devices paired once with a code shown
 on the computer and the household's password; a wall monitor shows a page of
-its own, with a guest mode that hides every amount. What changed in this
-version: [UPDATE_LOG.md](UPDATE_LOG.md).
+its own, with a guest mode that hides every amount. **05** asks how else the
+holdings could have been weighed: equal weights, least risk, the best return
+for its risk and hierarchical risk parity next to what is held now, on the
+efficient frontier, all measured above what lira cash earned at the central
+bank's policy rate. It shows how much each answer depends on the sample
+(shrinkage, ranges, resampling) and how each would have done if it had been
+chosen from the past only, against simply holding equal weights. It describes
+the past; it is not advice. What changed in this version:
+[UPDATE_LOG.md](UPDATE_LOG.md).
 Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
 [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 
@@ -73,22 +80,34 @@ Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
   gold; volatility, the largest fall, value at risk and expected shortfall
   with Kupiec's and Christoffersen's backtests, correlations; shares by
   holding, bank and currency, and deposits against the TMSF insurance limit.
+- **Portfolio theory, as description:** what lira cash earned at the TCMB
+  policy rate, as the benchmark of every return; the holdings weighed in
+  other ways (equal weights, least risk, the best return for its risk,
+  hierarchical risk parity) on the efficient frontier, without short selling;
+  a covariance with its correlations shrunk (Ledoit-Wolf), the range each
+  mean can lie in, the range of each weight over resampled histories, and an
+  out-of-sample test of every portfolio against equal weights.
 - **Reports:** balance sheet, net worth over time, income statement, cash flow
   statement, Sankey diagram, change in net worth split into saving, exchange
   results and revaluation, household ratios against published benchmarks,
-  recurring and upcoming payments, debts, returns, risk, concentration.
+  recurring and upcoming payments, debts, returns, risk, concentration,
+  portfolios and their out-of-sample test.
 - **Data sources:** the daily exchange rate bulletin of the Central Bank of the
   Republic of Türkiye (TCMB), Frankfurter XAU/USD for gold, the Turkish CPI
-  from EVDS3 (with a key) or the TCMB inflation table, TEFAS for funds, Yahoo
-  Finance for Borsa İstanbul shares, and a CPI copy shipped with the package.
-- **Tests:** 312 pytest tests, among them property tests on random ledgers
+  from EVDS3 (with a key) or the TCMB inflation table, the TCMB's policy rate,
+  TEFAS for funds, Yahoo Finance for Borsa İstanbul shares, and copies of the
+  CPI and the policy rate shipped with the package.
+- **Tests:** 340 pytest tests, among them property tests on random ledgers
   (Hypothesis), a check of the CPI against TurkStat's real series, a bank's
   published example of the annual cost rate, the spreadsheet function XIRR's
   example, Kupiec's acceptance regions as tabulated by Jorion, made-up bank
   statements and a card list PDF in Ziraat Bankası's formats, every page of
-  the interface with its security checks and its Turkish translation, and the
-  home network: pairing, what a phone and a monitor may open, the certificate
-  chain and its name constraints, and a real HTTPS server.
+  the interface with its security checks and its Turkish translation, the
+  home network (pairing, what a phone and a monitor may open, the certificate
+  chain and its name constraints, a real HTTPS server), and the portfolio
+  mathematics: the optimizer against the conditions an optimum must meet, the
+  shrunk covariance and hierarchical risk parity against figures worked with
+  PyPortfolioOpt and scipy.
 
 ![The interface: the overview of the demo household (made-up household, real exchange rates and gold prices)](docs/interface_overview.png)
 
@@ -97,6 +116,8 @@ Methods and references: [docs/METHOD.md](docs/METHOD.md). Data sources:
 ![The interface: where the demo household's September income went, as a Sankey diagram](docs/interface_sankey.png)
 
 ![The interface: a loan with its terms, the payment form and the payment plan](docs/interface_loan.png)
+
+![The interface: the demo household's holdings weighed in other ways, with the efficient frontier (made-up household, real exchange rates and gold prices)](docs/interface_frontier.png)
 
 ## Quick start
 
@@ -108,7 +129,7 @@ python -m venv .venv
 # Activate it
 #   Windows (PowerShell):  .venv\Scripts\Activate.ps1
 #   macOS and Linux:       source .venv/bin/activate
-pip install -e ".[dev]"     # sqlalchemy, pandas, httpx, typer, rich, platformdirs, python-calamine, pypdf,
+pip install -e ".[dev]"     # sqlalchemy, pandas, numpy, httpx, typer, rich, platformdirs, python-calamine, pypdf,
                             # fastapi, uvicorn, jinja2, python-multipart, cryptography, segno,
                             # matplotlib, pytest, hypothesis
 ```
@@ -156,9 +177,9 @@ instead of starting another one.
 | Accounts | Balances by kind, in their own unit and in TRY; a new account or category with its balance today; closing an account |
 | Reports | The balance sheet on any day, with liquidity and each owner's share; the income statement by category and month, with a chart of income and expenses, also in real TRY; the cash flow of the cash, checking and currency accounts; where the money went (a Sankey diagram of a month or a period, also as a table); why net worth changed (saving, exchange results, revaluation), in four units; household ratios against their benchmarks; recurring payments and what falls due in the next 60 days |
 | Debts | Every debt with its monthly rate, annual cost rate, real rate and what is left to pay in today's money. A loan added from its papers (the rate or the installment; new, taken before the ledger, or already in the ledger), with its payment plan, its payments (also early repayments) and deleting its terms. Card installments by month and each card's balance split; paying several debts off (avalanche or snowball); the annual cost rate of a credit offer; cash or installments |
-| Investments | Returns of the portfolio and of each account, time- and money-weighted, in TRY, real TRY, dollars and grams of gold; volatility, the largest fall, the value at risk with its backtest, correlations; shares by holding, bank and currency, and deposits against the TMSF insurance limit. For every investment account or the ones chosen |
+| Investments | Returns of the portfolio and of each account, time- and money-weighted, in TRY, real TRY, dollars and grams of gold, next to what lira cash earned at the policy rate; volatility, the largest fall, the value at risk with its backtest, correlations; shares by holding, bank and currency, and deposits against the TMSF insurance limit. **Portfolios:** what is held next to equal weights, least risk, the best return for its risk and hierarchical risk parity, on a chart of risk against return above cash with the efficient frontier; the range each holding's mean can lie in and the range of each weight over resampled histories. **Out of sample:** each portfolio chosen from the past only, against equal weights, as a table and one small chart each. For every investment account or the ones chosen |
 | History | What was edited, recategorized, deleted, imported or undone, newest first |
-| Settings | Language (English or Turkish), theme (as the system, light, dark) and number format; updating prices in the background; your ledger or the demo household, and building the demo again; backups to make and download; the EVDS key; the desktop shortcut; stopping. **Phones and monitor:** the household's password, opening to the home network, pairing and removing devices, the certificate, guest mode |
+| Settings | Language (English or Turkish), theme (as the system, light, dark) and number format; updating prices in the background, also from an earlier day; your ledger or the demo household, and building the demo again; backups to make and download; the EVDS key; the desktop shortcut; stopping. **Phones and monitor:** the household's password, opening to the home network, pairing and removing devices, the certificate, guest mode |
 
 A backup of the ledger is made before every import, undo and deletion (the
 newest 20 are kept). The search, the category review and a background task's
@@ -254,7 +275,8 @@ finance imports list                    # the files imported, and how many of th
 finance imports undo 3                  # deletes what import 3 added (after a backup)
 
 # Prices
-finance price update                    # TCMB rates, gold, CPI, funds, shares; fills in missing days
+finance price update                    # TCMB rates, gold, CPI, the policy rate, funds, shares; fills in missing days
+finance price update --start 2023-11-01 # older prices too (the portfolio reports look back up to three years)
 finance config show                     # where the files are
 ```
 
@@ -442,6 +464,11 @@ finance returns                            # time- and money-weighted, in four u
 finance returns --account "Assets:Investments"   # a portfolio of your choice: everything under a path
 finance risk                               # volatility, largest fall, value at risk and its backtest, correlations
 finance concentration                      # shares by holding, bank and currency; deposit insurance
+
+finance frontier                           # the holdings weighed in other ways, the efficient frontier, how sure
+finance frontier --frequency monthly --risk-free 40 --covariance sample
+finance backtest                           # each portfolio chosen from the past only, against equal weights
+finance backtest --window 26 --step 2      # chosen from the 26 weeks before, every 2 weeks
 ```
 
 - **The portfolio** is every fund, stock, gold and foreign currency account
@@ -456,6 +483,18 @@ finance concentration                      # shares by holding, bank and currenc
   shares the ledger held that day. Record a split or bonus issue with `finance
   split`; `price update` reminds you of one the ledger does not have yet.
   Dividends are not fetched: book them as income when they are paid.
+- **Cash.** `returns` also says what the lira earned at the TCMB policy rate
+  over the same days, before tax: the benchmark that doing nothing would have
+  met. `frontier` and `backtest` measure every return above it; `--risk-free`
+  gives another rate (what your deposit pays, for example).
+- **Portfolio theory** works on what the accounts hold today, with each
+  holding's price history (whether or not it was held then), weekly by
+  default, without short selling. It needs at least 20 returns of every
+  holding; `finance price update --start` gets older prices. A money market
+  fund counts as cash and is left out; so is a holding priced only now and
+  then. The figures describe a sample of the past and come with their
+  ranges; they are not advice. Methods: [docs/METHOD.md](docs/METHOD.md)
+  §29–31.
 - Fetching prices tells TEFAS and Yahoo which fund and share codes are asked
   for; nothing else is sent.
 
@@ -477,6 +516,8 @@ finance debt                            # debts: cost, real rate, what is left i
 finance returns                         # returns of the investments in four units
 finance risk                            # risk of the investments
 finance concentration                   # where the money is; deposits against the insurance limit
+finance frontier                        # the holdings weighed in other ways; the efficient frontier
+finance backtest                        # those portfolios out of sample, against equal weights
 finance cpi                             # the CPI of the last 13 months
 finance backup                          # a copy in the backups folder
 ```
@@ -585,6 +626,60 @@ portfolio, moves it nearly alone (correlation 0.97). `finance concentration` fin
 financial assets at one bank and 60 % in lira; the deposits there are within
 the insured 1,200,000 TRY.
 
+`finance frontier`, on a demo household built on 2026-11-11 (some lines and
+columns left out):
+
+```
+Portfolios of the holdings · 2025-10-31 – 2026-11-11 · 54 weekly returns of 4 holdings
+Cash: TRY at the TCMB policy rate, now 43.3 % a year compounded (rate of 2026-10-23)
+Holding     Share now  A year, in the window  Above cash a year     90 % range  Volatility   Ratio
+DEMO.FUND      14.9 %                 22.6 %            -16.5 %   -31 % … -2 %       9.1 %   -1.81
+DEMO.SHARE      7.9 %                  7.2 %            -26.1 %   -73 % … 21 %      28.9 %   -0.90
+USD            33.7 %                 19.0 %            -19.9 %  -21 % … -19 %       0.8 %  -26.45
+XAU_G          43.5 %                 21.6 %            -14.6 %   -55 % … 26 %      24.7 %   -0.59
+Cash returned 45.2 % a year in the window.
+Portfolio                 DEMO.FUND  DEMO.SHARE   USD  XAU_G  Above cash a year  Volatility   Ratio
+What you hold now              15 %         8 %  34 %   44 %            -17.6 %      10.7 %   -1.65
+Equal weights (1/N)            25 %        25 %  25 %   25 %            -19.3 %       8.9 %   -2.16
+Least risk                      2 %         0 %  97 %    1 %            -19.8 %       0.7 %  -27.58
+Hierarchical risk parity        1 %         0 %  99 %    0 %            -19.8 %       0.7 %  -26.97
+No best return for its risk: no holding earned more than cash in the window.
+Weights over 200 resampled histories   DEMO.FUND  DEMO.SHARE          USD      XAU_G
+Least risk                             1 % … 4 %   0 % … 1 %  95 % … 98 %  0 % … 1 %
+```
+
+In that year nothing the household held earned what lira cash did at the
+policy rate (45 %), so there is no best ratio to report, and every ratio is
+negative, which says little (a calmer loss gets a worse ratio). The dollar
+rose so evenly that it is the least risky holding in lira, and "least risk"
+is almost all dollars: a near-certain 20 % a year less than cash. A managed
+exchange rate looks like that until it moves; volatility measures the window.
+Gold's mean lies anywhere between 55 % under cash and 26 % over it: one year
+cannot tell. On three years of real prices of eight holdings (funds, shares,
+dollars, gold) the same command gave gold as the only holding above cash and
+a "best return for its risk" of 100 % gold, with weights that ran from 0 % to
+88 % or more for four of the holdings over the resampled histories: mostly
+noise.
+
+`finance backtest` chooses each portfolio from the 27 weeks before and holds
+it for four (the ratios left out):
+
+```
+Out of sample · from 2026-05-08 to 2026-11-11 (27 periods). Cash returned 44.6 % a year.
+Portfolio                 A year  Above cash  Volatility  Largest fall  Traded each time  Against 1/N     p
+What you hold now          3.2 %     -33.0 %       8.2 %         3.9 %             1.8 %        2.8 %  0.38
+Equal weights (1/N)       -2.2 %     -38.5 %       7.5 %         3.6 %             1.7 %                  —
+Least risk                21.9 %     -16.9 %       0.5 %         0.0 %             0.3 %       12.0 %  0.00
+Best return for its risk   4.2 %     -32.1 %       8.5 %         8.6 %            16.7 %        3.3 %  0.42
+Hierarchical risk parity  22.2 %     -16.7 %       0.5 %         0.0 %             0.1 %       12.1 %  0.00
+Best return for its risk: at 6 of the rebalancings nothing had beaten cash, and least risk was held instead.
+```
+
+Half a year is all the demo leaves to test on. The portfolio that chases the
+best ratio trades a sixth of itself every month and ends near what the
+household simply held; costs and taxes, which the test leaves out, would put
+it behind.
+
 ### Debts
 
 The household also pays a consumer loan taken before the ledger starts and
@@ -618,16 +713,16 @@ Avalanche saves 281.21 in interest; snowball clears a first debt sooner, which h
 
 | Module | Contents |
 |---|---|
-| `financeproject/core/` | Pure calculations, no database or network: amounts (`money`), dates, text folding, account kinds (`kinds`), the price book (`prices`), CPI (`inflation`), valuation (`valuation`), the split of a change in value (`decompose`), recurring series (`recurring`), loans and the annual cost rate (`loans`), returns (`returns`), risk (`risk`), HTML tables (`htmltable`) |
+| `financeproject/core/` | Pure calculations, no database or network: amounts (`money`), dates, text folding, account kinds (`kinds`), the price book (`prices`), CPI (`inflation`), valuation (`valuation`), the split of a change in value (`decompose`), recurring series (`recurring`), loans and the annual cost rate (`loans`), returns (`returns`), risk (`risk`), cash at a rate that changes (`rates`), portfolio theory with its optimizer (`portfolio`), HTML tables (`htmltable`) |
 | `financeproject/ledger/` | SQLAlchemy models, database and backups, accounts, transaction rules, splits and edits (`transactions`), the change history (`history`), installments, loans and their payments (`loans`), balance queries and the transaction search (`queries`) |
-| `financeproject/prices/` | Clients for the TCMB XML, Frankfurter, EVDS3, the TCMB CPI table, TEFAS and Yahoo Finance; storing and updating |
+| `financeproject/prices/` | Clients for the TCMB XML, Frankfurter, EVDS3, the TCMB CPI table, the TCMB policy rate page (`tcmb_rates`), TEFAS and Yahoo Finance; storing and updating, also the splits a price source reports |
 | `financeproject/ingest/` | Reading files (`tables`, `pdf`), bank statements (`statement`) and their templates (`banks/`: account statements, card lists), CSV, writing imports and undoing them (`importer`), rules, the learned categorizer (`learn`), the category review (`review`) |
-| `financeproject/reports/` | Balance sheet, net worth series and chart, change in net worth (`change`), income statement (`income`), cash flow, Sankey, ratios, recurring payments, debts (`debt`), investments: returns, risk, concentration (`investments`), what needs attention (`alerts`) |
+| `financeproject/reports/` | Balance sheet, net worth series and chart, change in net worth (`change`), income statement (`income`), cash flow, Sankey, ratios, recurring payments, debts (`debt`), investments: returns, risk, concentration (`investments`), the holdings' portfolios and their out-of-sample test (`portfolio`), what needs attention (`alerts`) |
 | `financeproject/web/` | The interface: the application (`app`), its security checks (`security`), the pages (`views/`, `templates/`), styles, scripts, icons and the bundled HTMX and ECharts (`static/`), the Turkish texts (`locales/`), the server (`server`), the home network (`lan`), paired devices and pairing codes (`devices`), the certificates (`tls`), background tasks (`jobs`), the desktop shortcut (`shortcut`) |
 | `financeproject/cli.py` | Command line (`finance`) |
 | `financeproject/demo.py` | The made-up demo household |
-| `financeproject/data/` | Public data shipped with the package: the CPI copy ([description](financeproject/data/README.md)) |
-| `tests/` | pytest + Hypothesis; `fixtures/` holds saved real TCMB and Frankfurter answers and made-up Ziraat Bankası statements and a card list; `test_web.py` runs the interface in the test process |
+| `financeproject/data/` | Public data shipped with the package: the copies of the CPI and of the policy rate ([description](financeproject/data/README.md)) |
+| `tests/` | pytest + Hypothesis; `fixtures/` holds saved real TCMB and Frankfurter answers, a shortened copy of the TCMB policy rate page, and made-up Ziraat Bankası statements and a card list; `test_web.py` runs the interface in the test process |
 | `docs/` | Method, data sources, example figures, pictures of the interface |
 
 ## Data and privacy
@@ -650,9 +745,10 @@ The repository is public, so **personal data never goes into it**.
   in a statement's header and the name above a card list are not stored. The
   statements and the card list under `tests/fixtures` are made up, and so are
   all names, numbers and amounts in the examples.
-- **Prices:** `finance price update` asks TCMB, Frankfurter, TEFAS and Yahoo
-  Finance for prices. The last two learn which fund and share codes are asked
-  for; no amounts or other data are sent.
+- **Prices:** `finance price update` asks TCMB (exchange rates, the CPI, the
+  policy rate), Frankfurter, TEFAS and Yahoo Finance. The last two learn which
+  fund and share codes are asked for; no amounts or other data are sent. The
+  portfolio reports are computed on this computer from the stored prices.
 - **Loans:** their terms and numbers are kept in your ledger only.
 - **.gitignore:** patterns such as `*.sqlite`, `backups/`, `output/` and
   `settings.toml` keep such files out as a second safety net.
@@ -713,9 +809,11 @@ them:
      written, its categories can be chosen there, and it can be undone
      afterwards; a history keeps what every edit changed.
 2. **The efficient frontier is fragile at household scale** (Michaud 1989;
-   DeMiguel et al. 2009). Version 05 will show it with shrinkage
-   (Ledoit-Wolf), resampling, a 1/N comparison and out-of-sample checks, as
-   description, not advice.
+   DeMiguel et al. 2009). 05 shows it that way: the correlations are shrunk
+   (Ledoit-Wolf), every mean comes with the range it can lie in and every
+   weight with its range over resampled histories, and every portfolio is
+   tested out of sample against 1/N. The pages describe what the holdings
+   did, name what the window cannot know, and do not say what to buy.
 3. **Say how current and how sure each number is.** Every value is shown with
    its price date and source. Prices older than 7 days and assets without a
    price are flagged; they are not guessed and not added to net worth. The
@@ -741,9 +839,9 @@ them:
 | **03** | Investments: TEFAS and BIST prices, TWR and XIRR, real returns, volatility, maximum drawdown, VaR and CVaR with backtests, correlation, concentration; card lists from PDF | ✅ |
 | **04a** | Web interface: overview with the net worth chart, transactions (search, add, edit, delete, history), imports with a preview and undo, category review, accounts, settings; English and Turkish; light and dark; desktop shortcut | ✅ |
 | **04b** | The rest in the interface: reports with charts (balance sheet, income statement, cash flow, Sankey, change in net worth, ratios, recurring payments), loans and debts (payment plans, payments, card installments, paying off, calculators), investments (returns, risk, concentration), rules | ✅ |
-| **04c** | Phones and a wall monitor on the home network: a password, HTTPS with a certificate of the computer's own, pairing with a QR code, the monitor's page and its guest mode; the interface on a phone (menu, add button, home-screen icon) | ✅ this version |
-| **05** | Portfolio theory: efficient frontier, GMV, tangency portfolio, HRP, 1/N | next |
-| **06** | Cash-flow forecasting: known flows and statistical forecasts, prediction intervals, backtests | |
+| **04c** | Phones and a wall monitor on the home network: a password, HTTPS with a certificate of the computer's own, pairing with a QR code, the monitor's page and its guest mode; the interface on a phone (menu, add button, home-screen icon) | ✅ |
+| **05** | Portfolio theory on the holdings, above cash at the TCMB policy rate: the efficient frontier, least risk (GMV), the best ratio (tangency), HRP and 1/N; Ledoit-Wolf shrinkage, ranges of means and of resampled weights, an out-of-sample test against 1/N | ✅ this version |
+| **06** | Cash-flow forecasting: known flows and statistical forecasts, prediction intervals, backtests | next |
 | **07** | Anomaly detection | |
 | **08** | Scenario engine: scenarios, sensitivity (Sobol), Monte Carlo, historical stress tests | |
 | **09** | Personal inflation, goals, budgets | |
@@ -797,63 +895,78 @@ not to fit will be changed or reworked. Status: ✅ done, ◐ partly, ☐ planne
 
 ## Not done in this version
 
-### From the 04c plan
+### From the 05 plan
 
-- **Real phones were not tried.** Pairing, the certificate, the home-screen
-  icon and the monitor were tested in Firefox 158 at a phone's width and a
-  tablet's, over a real HTTPS server on this computer, and with FastAPI's
-  test client; the certificate's steps on Android and iPhone follow their
-  documentation and may differ by version.
-- **Outside the home** the interface cannot be reached, on purpose: only
-  devices on the home network, with private addresses, are served. A VPN of
-  your own into the home network would be the way; it is not part of the
-  program.
-- **Display settings are shared:** the language, theme and number format
-  chosen on a phone change them on the computer too ("Like the system" lets
-  every device follow its own theme).
-- **No notifications:** a phone shows what is due when the interface is open;
-  it does not remind on its own.
-- **The computer must be on:** when it sleeps or `finance ui` stops, phones
-  and the monitor lose the interface until it runs again.
-- **Changing in place** (from 04b): a loan's terms and a rule are added and
-  deleted, not edited. **One household password**; there are no separate
-  users, and a paired phone can do everything but this computer's settings.
+- **Only what is held.** The portfolios weigh today's holdings. A fund you
+  are thinking about, or an index, cannot be put next to them yet.
+- **No limits but "no short selling":** no cap on one holding or one kind, so
+  a portfolio may be all one asset, as the best ratio often is.
+- **Risk is measured in lira,** above lira cash. In dollars, gold or real
+  lira the least risky holding would be another one; that view is not there.
+- **Means are shown with their ranges, not improved:** no Bayes-Stein or
+  Black-Litterman estimates, and the resampled portfolios are shown as ranges
+  of weights, not as a portfolio to hold.
+- **No costs and no taxes** in the out-of-sample test; the share traded at
+  each rebalancing is shown instead.
+- **The test of two Sharpe ratios** assumes independent, normal returns; the
+  robust version (Ledoit & Wolf 2008) is not implemented.
+- **Dividends** are not in share prices (from 03), so a share's return is
+  understated by its dividend yield.
+- **The policy rate is a stand-in** for what cash earns: it is before tax,
+  and deposits have paid more and less. A rate of your own can be given.
+- **Not tried on a real ledger of years.** The reports ran on the demo
+  household and on a made-up ledger holding three real funds, three real
+  shares, dollars and gold with three years of real prices.
 
-### Found while building 04c
+### Found while building 05
 
-- **A part of a page that refreshes itself** (the monitor's panel) gets its
-  chart data from an attribute: HTMX leaves `<script>` elements out of what it
-  swaps in, because the pages run no scripts of their own inline.
-- **Removing a device** ends its access at once; a monitor notices within
-  seconds and shows that it is not paired. Its cookie lasts 400 days (the
-  most browsers allow), after which it must be paired again.
-- **Pairing codes** live in memory: restarting the interface ends the one in
-  use; paired devices stay paired.
-- **The certificate authority** is made for this computer's name; renaming the
-  computer makes a new one, which phones must install again.
-- **Browsers:** tested with Firefox 158 (driven through WebDriver BiDi) and
-  with FastAPI's test client, in both languages, both themes and at a phone's
-  width; other current browsers should work but were not tried.
-- Carried over from 04b: the interface's Sankey groups categories under 2% of
-  the budget as "Other"; Firefox shows month fields as text (write
-  `2026-09`); messages from the program's core and the names in a ledger are
-  not translated. From 04a: the learned model can suggest an income category
-  for a refund; while a background task writes, a change may be refused with
-  "the ledger is busy"; transactions with more than two legs change only their
-  date, description, payee and note. From 03: dividends are booked by hand;
-  interest rates as a benchmark wait for 05; TEFAS's new API is undocumented
-  and Yahoo's is unofficial; card lists have no balances to check. From 01 and
-  02: other banks need one sample export each; EVDS has not been tried with a
-  real key; bills and scheduled transactions; the gold price is the
-  international parity.
+- **The usual shrinkage target was wrong here.** Shrinking the covariance
+  towards equal variances made the dollar look almost three times as risky as
+  it was on real prices, because a household's holdings differ a hundredfold
+  in variance. The target is now equal correlations, which keeps every
+  variance (METHOD §30).
+- **A ratio below zero says little,** and with cash at 40 % a year whole
+  years pass with every holding under it. The pages say so.
+- **Gold is quoted every day,** weekends and local holidays included; a
+  market day is now a day on which most holdings are quoted.
+- **A holding priced now and then** would have passed for cash, calm as it
+  looks; it is left out and named instead.
+- **Splits from before a share was held** are kept from the price source, so
+  its price history can be followed through them; a real two-for-one split
+  was met in the trial.
+- **A test depended on the day of the month** (a loan paid out "a month
+  before its first installment" lay in the future during the first half of a
+  month). It is fixed.
+- **In the interface:** the names on the chart of risk and return are placed
+  by the page's own code, because points often share a place (least risk and
+  risk parity, the best ratio and a single holding); a minus sign now comes
+  before the per cent sign in Turkish charts (−%5).
+- Carried over from 04c: real phones were not tried (Firefox at a phone's
+  width was); the interface cannot be reached from outside the home network,
+  on purpose; display settings are shared by all devices; no notifications;
+  the computer must be on; a loan's terms and a rule are added and deleted,
+  not edited; one household password. From 04b: the interface's Sankey groups
+  categories under 2% of the budget as "Other"; Firefox shows month fields as
+  text (write `2026-09`); messages from the program's core and the names in a
+  ledger are not translated. From 04a: the learned model can suggest an
+  income category for a refund; while a background task writes, a change may
+  be refused with "the ledger is busy"; transactions with more than two legs
+  change only their date, description, payee and note. From 03: dividends are
+  booked by hand; TEFAS's new API is undocumented and Yahoo's is unofficial;
+  card lists have no balances to check. From 01 and 02: other banks need one
+  sample export each; EVDS has not been tried with a real key; bills and
+  scheduled transactions; the gold price is the international parity.
 
 ## Next steps (proposal for the next version)
 
-1. **What using the interface shows,** on the computer and now on the phones:
+1. **What using the interface shows,** on the computer and on the phones:
    pages, words or steps that are missing, slow or unclear in daily use.
-2. **05, portfolio theory:** the efficient frontier, the global minimum
-   variance and tangency portfolios, HRP and 1/N on the investments' returns,
-   with shrinkage and out-of-sample tests.
+2. **06, cash-flow forecasting:** the known flows (salary, bills, loan and
+   card installments) and statistical forecasts of the rest, with prediction
+   intervals and a backtest of the forecasts.
 3. **Bills and scheduled transactions:** confirm a detected recurring payment
    as a bill, get warned when it is late or its amount changes (on the phone
    too).
+4. **More in portfolio theory, if it proves useful:** assets not held as
+   candidates, a cap per holding, the same analysis in dollars, gold or real
+   lira, each holding's share of the risk, trading costs in the test.
